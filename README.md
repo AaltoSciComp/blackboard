@@ -1,4 +1,6 @@
-# Blackboard 2.0 Server
+# Blackboard 2.0
+
+Virtual blackboards to spaces without blackboards.
 
 ## Overview
 
