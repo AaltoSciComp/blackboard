@@ -1,0 +1,105 @@
+secrets:
+  cert:
+    external: true
+  ca:
+    external: true
+  keyfile:
+    external: true
+  server-secret:
+    external: true
+  node-server-port:
+    external: true
+  nginx-host:
+    external: true
+
+services:
+  blackboard-db:
+    image: blackboard-db
+    init: true
+    build:
+      context: ./db
+      args:
+        - TZ=${TZ}
+    #container_name cannot be defined when using Docker stack
+    restart: always
+    volumes:
+      - bbdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_USER: blackboard
+      POSTGRES_DB: blackboard
+      TZ: ${TZ}
+      PGTZ: ${TZ}
+
+  # Node.js backend
+  blackboard-server:
+    build:
+      context: ./server
+      target: production
+    image: blackboard-server
+    init: true
+    #container_name cannot be defined when using Docker stack
+    restart: always
+    ports:
+      - ${NODE_PORT_PROD}:${NODE_PORT_PROD}
+    volumes:
+      - ./server/src:/srv/app/server/src
+      #- ./server-postgres/public:/srv/app/server/public
+    depends_on:
+      - "blackboard-db" # Docker stack does not support the longer format
+    environment:
+      NODE_SERVER_PORT: ${NODE_PORT_PROD}
+      HOME: /home/node
+      TZ: ${TZ}
+      CERT_PATH: /run/secrets/cert
+      CA_PATH: /run/secrets/ca
+      KEYFILE_PATH: /run/secrets/keyfile
+    secrets:
+      - cert
+      - ca
+      - keyfile
+      - server-secret
+      - nginx-host # admin scripts need the current hostname
+    user: "1000" # Need to specify the (node) user here so secrets directory is readable for it
+    command: npm run start
+  
+  # React frontend
+  blackboard-client:
+    build:
+      context: ./client
+      args:
+        USE_NGINX: "true"
+    image: blackboard-client
+    init: true
+    restart: always
+    ports:
+      - 80:80 # http port hardcoded for now as it's only used for redirecting to the actual https port
+      - ${NGINX_PORT}:${NGINX_PORT}
+    volumes:
+      - ./client/src:/srv/app/client/src
+      - ./client/public:/srv/app/client/public
+      - ./client/templates/:/etc/nginx/templates
+    environment:
+      VITE_PORT: ${NGINX_PORT} # this is probably not even needed
+      HOME: /home
+      TZ: ${TZ}
+      NGINX_HOST: ${NGINX_HOST}
+      NGINX_PORT: ${NGINX_PORT}
+      CERT_PATH: /run/secrets/cert
+      CA_PATH: /run/secrets/ca
+      KEYFILE_PATH: /run/secrets/keyfile
+    depends_on:
+      - "blackboard-server" # Docker stack does not support the longer format
+    links:
+      - blackboard-server
+    secrets:
+      - cert
+      - ca
+      - keyfile
+      - nginx-host
+    #user: $USER_ID
+    stdin_open: true
+    command: nginx -g 'daemon off;'
+
+volumes:
+  bbdata:

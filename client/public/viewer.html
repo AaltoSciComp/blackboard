@@ -1,0 +1,1816 @@
+<!doctype html>
+<html>
+
+<head>
+    <script src="/js/socket.io.min.js"></script>
+    <script src="/js/konva.min.js"></script>
+    <script src="/js/toastify.js"></script>
+    <script src="/js/lz-string.min.js"></script>
+    <title>Blackboard viewer</title>
+    <style>
+        body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: gray;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+            'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+            sans-serif;
+        }
+        #controlbox p {
+            color: #fff;
+            font-weight: 400;
+        }
+        #controlbox .hidden {
+            display:none;
+        }
+        #stage-parent {
+            height: 100%;
+            width: 100%;
+        }
+        #fstoggle, #offlinetoggle {
+            display: block;
+            width: 100%;
+            margin: 1rem 0 0 0;
+        }
+        #controlbox {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            -webkit-transform: translateX(-50%);
+            -moz-transform: translateX(-50%);
+            transform: translateX(-50%);
+            padding: 0 1rem 0 1rem;
+            border-radius: 8px;
+            background-color: rgba(47,79,79,0.7);
+            transition: opacity 0.6s ease-out;
+            text-align: center;
+        }
+        #controlbox.inactive {
+            opacity: 0;
+        }
+        button {
+            outline: none;
+            cursor: pointer;
+            color: #fff;
+            background-color: #0d6efd;
+            display: inline-block;
+            font-weight: 400;
+            line-height: 1.5;
+            text-align: center;
+            text-decoration: none;
+            vertical-align: middle;
+            cursor: pointer;
+            -webkit-user-select: none;
+            user-select: none;
+            border: 1px solid transparent;
+            padding: 0.375rem 0.75rem;
+            font-size: 1rem;
+            border-radius: 0.25rem;
+            transition: color .15s ease-in-out,background-color .15s ease-in-out,border-color .15s ease-in-out,box-shadow .15s ease-in-out;
+        }
+        button:hover {
+            background-color: #0b5ed7;
+        }
+        button.readonly {
+            background-color: grey;
+            cursor: default;
+        }
+
+/*!
+ * Toastify js 1.12.0 (modified)
+ * https://github.com/apvarun/toastify-js
+ * @license MIT licensed
+ *
+ * Copyright (C) 2018 Varun A P
+ */
+
+.toastify {
+    padding: 12px 20px;
+    color: #ffffff;
+    display: inline-block;
+    box-shadow: 0 3px 6px -1px rgba(0, 0, 0, 0.12), 0 10px 36px -4px rgba(77, 96, 232, 0.3);
+    background: green;/*-webkit-linear-gradient(315deg, #73a5ff, #5477f5);
+    background: linear-gradient(135deg, #73a5ff, #5477f5);*/
+    position: fixed;
+    opacity: 0;
+    transition: all 0.4s cubic-bezier(0.215, 0.61, 0.355, 1);
+    border-radius: 2px;
+    cursor: pointer;
+    text-decoration: none;
+    max-width: calc(50% - 20px);
+    z-index: 2147483647;
+}
+
+.toastify-error {
+    background-color: red;
+}
+
+.toastify.on {
+    opacity: 1;
+}
+
+.toast-close {
+    background: transparent;
+    border: 0;
+    color: white;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 1em;
+    opacity: 0.4;
+    padding: 0 5px;
+}
+
+.toastify-right {
+    right: 15px;
+}
+
+.toastify-left {
+    left: 15px;
+}
+
+.toastify-top {
+    top: -150px;
+}
+
+.toastify-bottom {
+    bottom: -150px;
+}
+
+.toastify-rounded {
+    border-radius: 25px;
+}
+
+.toastify-avatar {
+    width: 1.5em;
+    height: 1.5em;
+    margin: -7px 5px;
+    border-radius: 2px;
+}
+
+.toastify-center {
+    margin-left: auto;
+    margin-right: auto;
+    left: 0;
+    right: 0;
+    max-width: fit-content;
+    max-width: -moz-fit-content;
+}
+
+@media only screen and (max-width: 360px) {
+    .toastify-right, .toastify-left {
+        margin-left: auto;
+        margin-right: auto;
+        left: 0;
+        right: 0;
+        max-width: fit-content;
+    }
+}
+
+    </style>
+</head>
+
+<body>
+    <div id="stage-parent" height="100vh" style="overflow: hidden">
+        <div id="helperdiv"></div>
+    </div>
+    <div id="highlight-parent" height="100vh" style="overflow: hidden">
+    </div>
+    <div id="controlbox">
+        <button id="offlinetoggle">Go offline</button>
+        <div id="navcontrols" class="hidden">
+            <p>Navigate boards</p>
+            <button id="go_previous">&lt;</button>
+            <button id="boardnumber"></button>
+            <button id="go_next">&gt;</button>
+            <p><small>(or use arrow keys on keyboard)</small></p>
+        </div>
+        <div id="offsetcontrols">
+            <p>Adjust offset</p>
+            <button onclick="decreaseOffset()">-</button>
+            <button class="readonly" id="offset">0</button>
+            <button onclick="increaseOffset()">+</button>
+            <p><button onClick="resetOffset()">Reset</button></p>
+            <p><small>(in "pages" of visible boards)</small></p>
+        </div>
+        <p><button id="fstoggle">Toggle fullscreen</button></p>
+        <p><button onClick="goToHome()">Back to main page</button></p>
+    </div>
+    <script>
+        let globalBusyDrawingNonce;
+        let borderWidth = 0.003;
+
+        var screenSize = { width: window.innerWidth, height: window.innerHeight };
+
+        var conf = [];
+        conf[1] = {
+            rows: 1,
+            cols: 1
+        };
+        conf[2] = {
+            rows: 2,
+            cols: 1
+        };
+        conf[4] = {
+            rows: 2,
+            cols: 2
+        };
+        conf[9] = {
+            rows: 3,
+            cols: 3
+        };
+        conf[16] = {
+            rows: 4,
+            cols: 4
+        };
+        
+        var laserColor = '#ff0000'; // laser pointer default color
+        var laserSize = 0.005; // laser pointer size relative to board width
+
+        var numVisBoards; // number of visible boards
+        var activeBoard = 0; // active board (unlimited or 1...999)
+        var startingBoard; // starting board in view (coming from server)
+        var activeStage; // active stage (fixed in 1..numVisBoards)
+        var from; // smallest board # visible (old value)
+        var to; // largest board # visible
+        var offline = false; // if set, browse pages offline from local storage
+        var defaultBoardColor;
+        var gotSettings = false;
+        var stageFinished = false;
+        var playShapesGoingOn = false;
+        const urlParams = new URLSearchParams(window.location.search);
+        const sid = Number(urlParams.get('s'));
+        var offset = Number(urlParams.get('offset')) || 0;
+        const insecure = Number(urlParams.get('insecure'));
+        var socket = (insecure ? io('http://' + window.location.hostname + ':8080', { transports: ['websocket'] }) : io('https://' + window.location.hostname + ':8080', { transports: ['websocket'], secure: true }));
+        var stage;
+        var boardsModified = []; // modification times for locally cached boards (for faster access)
+        var cacheDirty = [];     // these boards have dynamic changes which have not been loaded into cache yet
+        stage = [];
+        // separate layers for bg and actual stuff
+        const layer = { 'bg': [], 'grid': [], 'main': [] };
+        // bg rectangle (separates boards and indicates current one)
+        var bgRect = [];
+        var bgNumber = [];
+        var bgImage = [];
+        var imageObj = [];
+        // Hide fullscreen toggle fstoggle when idle
+        let idleTimer = null;
+        let idleState = false;
+        var elem = document.documentElement; // Needed for fullscreen
+        var highlightStage = null;
+        var highlightLayer = null;
+        var highlightRect = null;
+
+        document.getElementById("boardnumber").innerHTML = from;
+
+        document.title += ' / ' + sid;
+
+        // Only handle window resize events once per second
+        function debounce(fn, ms) {
+            let timer
+            return _ => {
+                clearTimeout(timer)
+                timer = setTimeout(_ => {
+                timer = null
+                fn.apply(this, arguments)
+                }, ms)
+            };
+        }
+
+        const debouncedfitStage = debounce(function fitStageIntoParentContainer() {
+            //var container = document.querySelector('#stage-parent');
+            // now we need to fit stage into parent
+            screenSize.width = window.innerWidth;
+            screenSize.height = window.innerHeight;
+            highlightStage = null;
+            highlightLayer = null;
+            highlightRect = null;
+
+            //console.info('resizing to ',screenSize.width, ' x ', screenSize.height);
+            // to do this we need to scale the stage
+            reconfigureBoards();
+        }, 1000);
+
+        window.addEventListener('resize', debouncedfitStage);
+
+        // makes any function a chainable function
+        // source: https://dev.to/chromiumdev/cancellable-async-functions-in-javascript-5gp7
+        function makeChainable(fn) {
+            let p = Promise.resolve(true);
+            return (...args) => {
+                p = p.then(() => fn(...args));
+                return p;
+            };
+        }
+
+        // lines need to be drawn one at a time so the coordinates are not mixed up
+        const drawShapeChain = makeChainable(drawShape);
+        const playShapesChain = makeChainable(playShapes);
+
+        const sleep = (milliseconds) => {
+            return new Promise(resolve => setTimeout(resolve, milliseconds))
+        }
+
+        // Shameless copy from https://stackoverflow.com/questions/4777077/removing-elements-by-class-name
+        function removeElementsByClass(className){
+            const elements = document.getElementsByClassName(className);
+            while(elements.length > 0){
+                elements[0].parentNode.removeChild(elements[0]);
+            }
+        }
+
+        function connectSocket() {
+            if(!socket.connected) {
+                socket = (insecure ? io('http://' + window.location.hostname + ':8080', { transports: ['websocket'] }) : io('https://' + window.location.hostname + ':8080', { transports: ['websocket'], secure: true }));
+                //socket.open();
+            } else {
+                Toastify({
+                    text: "You are already connected to the server",
+                    duration: 5000,
+                    gravity: "top",
+                    position: 'left',
+                    className: 'toastify-error'
+                }).showToast();
+            }
+        }
+
+        function disconnectSocket() {
+            if(socket.connected) {
+                socket.disconnect();
+                Toastify({
+                    text: "Disconnected from server, you are now in offline mode",
+                    duration: 5000,
+                    gravity: "top",
+                    position: 'left',
+                    className: 'toastify-error'
+                }).showToast();
+            }/* else {
+                Toastify({
+                    text: "Disconnect requested but no server connection present",
+                    duration: 5000,
+                    gravity: "top",
+                    position: 'left',
+                    className: 'toastify-error'
+                }).showToast();
+            }*/
+        }
+
+        // Konva custom sceneFunc to make a grid
+        function makeKonvaGrid(context, shape) {
+            const width = shape.width();
+            const height = shape.height();
+            const hspacing = shape.attrs.hspacing > 0 ? shape.attrs.hspacing : width / 10;
+            const vspacing = shape.attrs.vspacing > 0 ? shape.attrs.vspacing : height / 10;
+            let vLines, hLines;
+            if(hspacing > 0) {
+                const realVLines = width / hspacing;
+                vLines = Math.floor(realVLines);
+                // Avoid missing borderlines due to rounding errors when snapped to grid
+                if(realVLines - vLines > 0.95) vLines++;
+            } else vLines = 1;
+            if(vspacing > 0) {
+                const realHLines = height / vspacing;
+                hLines = Math.floor(realHLines);
+                // Avoid missing borderlines due to rounding errors when snapped to grid
+                if(realHLines - hLines > 0.95) hLines++;
+            } else hLines = 1;
+
+            // Fill background color if defined
+            if (shape.attrs.fill && shape.attrs.fillEnabled) {
+                context.fillStyle = shape.attrs.fill;
+                context.fillRect(0, 0, width, height);
+            }
+            
+            // Vertical grid lines. Support drawing in both directions.
+            for(var i = 0; vLines > 0 ? i<=vLines : i>= vLines; vLines > 0 ? i++ : i--) {
+                context.beginPath();
+                context.moveTo(hspacing * i, 0);
+                context.lineTo(hspacing * i, height);
+                context.closePath();
+                context.fillStrokeShape(this);
+            }
+            
+            // Horizontal grid lines. Support drawing in both directions.
+            for(var j = 0; hLines > 0 ? j<=hLines : j>= hLines; hLines > 0 ? j++ : j--) {
+                context.beginPath();
+                context.moveTo(0, vspacing * j);
+                context.lineTo(width, vspacing * j);
+                context.closePath();
+                context.fillStrokeShape(this);
+            }
+        }
+
+        function boardIsInView(board) {
+            return board >= from && board <= to;
+        }
+
+        function setFromTo(sbFromPresenter) {
+            const f = sbFromPresenter + (offset * numVisBoards);
+            const t = sbFromPresenter + numVisBoards - 1 + (offset * numVisBoards);
+            if(f > 0) {
+                from = f;
+                to = t;
+            } else {
+                from = 1;
+                to = numVisBoards;
+            }
+        }
+
+        function showToggles() {
+            clearTimeout(idleTimer);
+            if (idleState == true) {
+                document.querySelector('#controlbox').classList.remove("inactive");
+                document.body.style.cursor = "default";
+            }
+            idleState = false;
+            idleTimer = setTimeout(function() {
+                document.querySelector('#controlbox').classList.add("inactive");
+                document.body.style.cursor = "none";
+                idleState = true;
+            }, 2000);
+        }
+
+        showToggles(2000);
+
+        window.addEventListener('pointermove', () => {
+            showToggles();
+        })
+
+        document.querySelector('#fstoggle').addEventListener('click', () => {
+            toggleFullscreen();
+        })
+
+        document.querySelector('#offlinetoggle').addEventListener('click', () => {
+            toggleOffline();
+        })
+
+        document.querySelector('#go_previous').addEventListener('click', () => {
+            goPrev();
+        })
+
+        document.querySelector('#go_next').addEventListener('click', () => {
+            goNext();
+        })
+
+
+        function goFirst() {
+            if(offline) setActiveBoard({ab: 1});
+        }
+
+        function goNext() {
+            if(offline) setActiveBoard({ab: activeBoard + 1});
+        }
+
+        function goPrev() {
+            if(offline && activeBoard > 1) setActiveBoard({ab: activeBoard - 1});
+        }
+
+        document.onkeydown = function(e) {
+            switch (e.keyCode) {
+                case 37:
+                    // left
+                    goPrev();
+                    break;
+                case 38:
+                    // up
+                    goFirst();
+                    break;
+                case 39:
+                    // right
+                    goNext();
+                    break;
+                case 40:
+                    // down
+                    //goLast(); //not yet implemented
+                    break;
+            }
+        };
+
+        /**
+         * Full screen on/off
+         */
+        function is_fullscreen(){
+            return (document.fullscreenElement != null || document.webkitIsFullScreen);
+        }
+
+        function toggleFullscreen() {
+            if(is_fullscreen()) {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen();
+                } else if (document.webkitExitFullscreen) { /* Safari */
+                    document.webkitExitFullscreen();
+                } else if (document.msExitFullscreen) { /* IE11 */
+                    document.msExitFullscreen();
+                }
+            } else {
+                if (elem.requestFullscreen) {
+                    elem.requestFullscreen();
+                } else if (elem.webkitRequestFullscreen) { /* Safari */
+                    elem.webkitRequestFullscreen();
+                } else if (elem.msRequestFullscreen) { /* IE11 */
+                    elem.msRequestFullscreen();
+                }
+            }
+        }
+
+        function toggleOffline() {
+            if(offline) {
+                offline = false;
+                document.getElementById("offlinetoggle").innerHTML = "Go offline";
+                document.querySelector('#navcontrols').classList.add("hidden");
+                document.querySelector('#offsetcontrols').classList.remove("hidden");
+                highlightLayer.visible(true);
+                connectSocket();
+                initializeGridView();
+            } else {
+                offline = true;
+                document.getElementById("offlinetoggle").innerHTML = "Go online";
+                document.querySelector('#navcontrols').classList.remove("hidden");
+                document.querySelector('#offsetcontrols').classList.add("hidden");
+                backupAndDeleteCachedBoards();
+                disconnectSocket();
+                numVisBoards = 1;
+                from = activeBoard;
+                to = activeBoard;
+                prepareStage();
+                highlightLayer.visible(false);
+                setActiveBoard({ab: activeBoard});
+            }
+        }
+
+        function increaseOffset() {
+            offset++;
+            initializeGridView();
+        }
+
+        function decreaseOffset() {
+            offset--;
+            initializeGridView();
+        }
+
+        function resetOffset() {
+            offset = 0;
+            initializeGridView();
+        }
+
+        function goToHome() {
+            location.assign(window.location.origin);
+        }
+
+        function readableTime(t) {
+            const date = new Date(t);
+            return date.toLocaleTimeString("fi-FI");
+        }
+
+        function setCachedTime(board, mod) {
+            boardsModified[board] = mod;
+            return true;
+        }
+
+        function getCachedTime(board) {
+            if(typeof(boardsModified[board]) === 'undefined') {
+                //console.info('getCachedTime not found: ' + board);
+                return 0;
+            } else {
+                //console.info('getCachedTime found: ' + board + ' mod: ' + boardsModified[board]);
+                return boardsModified[board];
+            }
+        }
+
+        function cacheIsUpToDate(board, mod) {
+            const cTime = getCachedTime(board);
+            //console.info('cTime, mod: ', readableTime(cTime), readableTime(mod), cTime - mod);
+            return cTime >= mod;
+        }
+
+        function setCachedBoard(id, data, backup = false) {
+            //if(id > maxboard) maxboard = id; // update the largest board id we have received
+            setCachedTime(id, data.mod);
+            if(backup) {
+                return localStorage.setItem('board_' + sid + '_' + id, LZString.compress(JSON.stringify(data)));
+            } else {
+                cacheDirty[id] = false;
+                return sessionStorage.setItem('board_' + sid + '_' + id, LZString.compress(JSON.stringify(data)));
+            }
+        }
+
+        // Get board data from cache
+        function getCachedBoard(id, usebackup = false) {
+            let b;
+            if(usebackup) {
+                b = LZString.decompress(localStorage.getItem('board_' + sid + '_' + id));
+                // Try temp storage if backup not found
+                if(!b) b = LZString.decompress(sessionStorage.getItem('board_' + sid + '_' + id));
+            } else {
+                // If not using backup (= offline mode), check if board has changed since last cached
+                if(cacheDirty[id] === true) {
+                    //console.info('need to request board',id);
+                    socket.emit('request_boards', {sid: sid, token: getToken(), from: id, to: id });
+                    return false;
+                } else {
+                    // If no shapes / board properties have changed, it's safe to use cached data
+                    b = LZString.decompress(sessionStorage.getItem('board_' + sid + '_' + id));
+                    //console.info('using cached data for',id);
+                }
+            }
+            if(b) return JSON.parse(b);
+            else return null;
+        }
+
+        // Backup boards from session storage to local storage (more permanent)
+        function backupAndDeleteCachedBoards() {
+            boardsModified.forEach((el, idx) => {
+                if(el) {
+                    let cache = getCachedBoard(idx);
+                    if(cache) setCachedBoard(idx, cache, true);
+                    sessionStorage.removeItem('board_' + sid + '_' + idx);
+                    // prevent using empty boards from sessionStorage when coming back online
+                    setCachedTime(idx, 0); 
+                }
+            });
+            /*for(let i = 1; i <= max; i++) {
+                let tmp = getCachedBoard(i);
+                if(tmp) setCachedBoard(i, tmp, true);
+            }*/
+        }
+
+        async function basicLogin () {
+            initSocketCallbacks();
+            var password = prompt("Password for the board");
+            socket.emit('viewer_login', {pw: password, sid: sid, offset: offset});
+        }
+
+        function getToken() {
+            const token = sessionStorage.getItem('viewertoken_' + sid);
+            if (!token) {
+                initializeGridView();
+                return false
+            } else return token;
+        }
+
+        /**
+         * "DB width to screen width"
+         * Convert percentage of given (canvas) width to pixel width
+         */
+        function pctToPixels(size, dimension) {
+            return Number((0.01 * size * dimension).toFixed(2))
+        }
+
+        function getPhysicalCanvasId(logicalCanvasId) {
+            if (logicalCanvasId > to || logicalCanvasId < from) {
+                return null;
+            } else {
+                return logicalCanvasId - (from - 1);
+            }
+        }
+
+        function removeLasers() {
+            for(var i = 1; i <= layer.main.length; i++) {
+                if(layer.main[i]) {
+                    const laser = layer.main[i].findOne('#mainlaser');
+                    if(laser) laser.destroy();
+                }
+            }
+        }
+
+        function highlightBoard(phys) {
+            var newphys = null;
+            if (!gotSettings) return;
+            //console.info('highlightBoard ' + phys + ' called');
+            if(phys) {
+                newphys = phys;
+            }
+            let container = document.getElementById('container' + phys);
+            if(!container || !highlightRect) return;
+            newX = parseInt(container.style.left,10);
+            newY = parseInt(container.style.top,10);
+            newWidth = parseInt(container.style.width,10);
+            newHeight = parseInt(container.style.height,10);
+            highlightRect.to({x: newX, y: newY, width: newWidth, height: newHeight, easing: Konva.Easings.StrongEaseOut});
+            //console.info('set position to',newX,newY);
+        }
+
+        function setActiveBoard(json, init=false) {
+            let keep_ab = false;
+            if(offline) {
+                let oldboard = activeBoard;
+                from = json.ab;
+                to = json.ab;
+                // initBoard returns false if board not found from cache
+                if(!initBoard(json.ab)) {
+                    from = oldboard;
+                    to = oldboard;
+                    activeBoard = oldboard;
+                    keep_ab = true; // don't increment activeBoard if we have nothing in cache
+                    Toastify({
+                        text: "Board content not found in cache!",
+                        duration: 5000,
+                        gravity: "top",
+                        position: 'left',
+                        className: 'toastify-error'
+                    }).showToast();
+                };
+                document.getElementById("boardnumber").innerHTML = from;
+            } else {
+                // We are online, controlled by presenter...
+                if (!gotSettings) return;
+                //console.info('setActiveBoard called: ', json);
+                /**
+                 * If new active board is within view, don't change the view range
+                 * but only request and highlight the new active board
+                 */
+                if((numVisBoards > 1) && (json.sb === from) && !init) {
+                    // Init is set when running for the first time
+                    if(json.ab !== activeBoard) {
+                        // stop any drawing still going on
+                        globalBusyDrawingNonce = new Object();
+                        setFromTo(json.sb);
+                        const abIndex = json.ab - json.sb; // active board's index within the array of modification times
+                        //console.log('abIndex: ', abIndex);
+                        //console.info('board',json.ab,'time',readableTime(json.mods[abIndex]));
+                        const uptodate = cacheIsUpToDate(json.ab, json.mods[abIndex]);
+                        //console.info('uptodate: ', uptodate);
+                        if(uptodate) {
+                            //console.info('setActiveBoard finds stuff from cache');
+                            // Board data is in cache and up to date
+                        } else {
+                            //console.info('setActiveBoard emits request_boards');
+                            const token = getToken();
+                            if(token) {
+                                socket.emit('request_boards', {sid: sid, token: token, from: json.ab, to: json.ab });
+                            } else {
+                                // XXX we have lost session at this point
+                                return;
+                            }
+                        }
+                    }
+                } else {
+                    setFromTo(json.sb);
+                    //console.info('initializing boards ', from, ' - ', to);
+                    for(var i = from;i < from + numVisBoards; i++) {
+                        //console.info('calling initboard row 737',i);
+                        initBoard(i);
+                    }
+                }
+            }
+
+
+            if(!keep_ab) activeBoard = Number(json.ab); // Don't update activeBoard when in offline mode and cached board not found
+
+            /** Boards are never highlighted when:
+             * - in offline mode
+             * - offset > 0 (we only show boards after the current view)
+             * - offset < 0 and not in the "first page"
+             */
+            if(offline || (offset > 0)) {
+                highlightLayer.visible(false);
+                return;
+            }
+
+            if(offset < 0) {
+                if(activeBoard > to) {
+                    highlightLayer.visible(false);
+                    return;
+                } else {
+                    highlightLayer.visible(true);
+                }
+            }
+
+            const newAs = getPhysicalCanvasId(activeBoard);
+            highlightBoard(newAs);
+        };
+
+
+        async function reconfigureBoards() {
+            //console.info('reconfigureBoards called, calling prepareStage');
+            await prepareStage();
+            for(var i = from; i <= to; i++) {
+                initBoard(i);
+            }
+            activeStage = getPhysicalCanvasId(activeBoard);
+            if(!offline && activeStage) await highlightBoard(activeStage);
+        }
+
+        async function prepareContainers() {
+            if(typeof(from) === 'undefined') {
+                console.log('FROM MISSING');
+                return;
+            }
+            //console.info('prepareContainers: ' + numVisBoards, activeBoard, startingBoard, from, defaultBoardColor);
+            var parentDiv = document.getElementById("stage-parent");
+            var helperDiv = document.getElementById("helperdiv");
+            // Remove old containers
+            //console.info('removing old containers');
+            removeElementsByClass('gridboard');
+            var containerid = 1;//conf[numVisBoards].cols * conf[numVisBoards].rows - 1;
+            var recreate = false;
+            for (row = 0; row < conf[numVisBoards].rows; row++) {
+                for (col = 0; col < conf[numVisBoards].cols; col++) {
+                    let newDiv = document.getElementById('container' + containerid);
+                    if(newDiv === null) {
+                        newDiv = document.createElement("div");
+                        recreate = true;
+                    }
+                    newDiv.style.position = "absolute";
+                    newDiv.style.width = (screenSize.width * (1 / conf[numVisBoards].cols)).toString() + "px";
+                    newDiv.style.height = (screenSize.height * (1 / conf[numVisBoards].rows)).toString() + "px";
+                    newDiv.style.left = (col * screenSize.width * (1 / conf[numVisBoards].cols)).toString() + "px";
+                    newDiv.style.top = (row * screenSize.height * (1 / conf[numVisBoards].rows)).toString() + "px";
+                    newDiv.classList.add("gridboard"); // Add a class so containers can be deleted
+                    newDiv.setAttribute("id", "container" + containerid.toString());
+                    if(recreate) parentDiv.insertBefore(newDiv, helperDiv);
+                    containerid++;
+                }
+            }
+        };
+
+        async function initializeGridView() {
+            socket.off('login_success');
+
+            socket.on('login_success', function (json) {
+                //console.info('got a socket message login_success');
+                if (json.nvb > 0) { // sanity check the response
+                    sessionStorage.setItem('viewertoken_' + sid, json.token);
+                    numVisBoards = Number(json.nvb);
+                    activeBoard = Number(json.ab);
+                    startingBoard = Number(json.sb);
+                    from = startingBoard; // Initialize from to be equal to startingBoard
+                    to = from + numVisBoards - 1;
+                    if (json.defaultBoardColor !== defaultBoardColor) {
+                        defaultBoardColor = json.defaultBoardColor;
+                    }
+                    //console.info('getInitialSettings promise resolved');
+                    gotSettings = true;
+                
+                    for(var i = startingBoard; i < startingBoard + numVisBoards; i++) {
+                        getCachedTime(i);
+                    }
+                    prepareStage()
+                    .then(function() {
+                        const newAs = getPhysicalCanvasId(activeBoard);
+                        if(!offline && newAs) highlightBoard(newAs);
+                    });
+                    const dn = parseInt(Date.now());
+                    setActiveBoard({ab: activeBoard, sb: startingBoard, nvb: numVisBoards, mods: [dn,dn,dn,dn]}, true);
+                    document.getElementById("offset").innerHTML = offset;
+                } else {
+                    console.error("Got invalid response from server")
+                }
+            });
+
+            if(urlParams.get('promptpw') === 'true') {
+                // Show login prompt if password is set for the session
+                basicLogin();
+            } else {
+                // Otherwise just login with a blank password
+                initSocketCallbacks();
+                socket.emit('viewer_login', {pw: '', sid: sid, offset: offset});
+            }
+        }
+
+        async function prepareStage() {
+            if (!gotSettings) return;
+            //console.info('prepareStage called, nvb: ', numVisBoards);
+            //console.info('before: ' + numVisBoards, activeBoard, defaultBoardColor);
+            // First create divs (DOM containers) to host Konva Stages in
+            await prepareContainers();
+            //console.info('after: ' + numVisBoards, activeBoard, defaultBoardColor);
+            for (var i = 1; i <= numVisBoards; i++) {
+                const boardWidth = screenSize.width * (1 / conf[numVisBoards].cols);
+                const boardHeight = screenSize.height * (1 / conf[numVisBoards].rows);
+                stage[i] = new Konva.Stage({
+                    container: 'container' + i,
+                    width: boardWidth,
+                    height: boardHeight,
+                });
+
+                layer.main[i] = new Konva.Layer({listening: false, transformsEnabled: 'none'});
+                layer.bg[i] = new Konva.Layer({listening: false, transformsEnabled: 'none'});
+                layer.grid[i] = new Konva.Layer({listening: false, transformsEnabled: 'none'});
+
+                bgNumber[i] = new Konva.Text({
+                    x: boardWidth * 0.5,
+                    y: boardHeight * 0.5,
+                    text: '??',
+                    fontSize: boardWidth * 0.1,
+                    fill: 'darkslategrey',
+                });
+                bgNumber[i].offsetX(bgNumber[i].width() * 0.5);
+                bgNumber[i].offsetY(bgNumber[i].height() * 0.5);
+
+                bgRect[i] = new Konva.Rect({
+                    x: 0,
+                    y: 0,
+                    width: boardWidth,
+                    height: boardHeight,
+                    stroke: 'black',
+                    strokeWidth: borderWidth * (1 / conf[numVisBoards].rows) * screenSize.width,
+                    fill: defaultBoardColor,
+                });
+
+                bgImage[i] = new Konva.Image({
+                    x: 0,
+                    y: 0,
+                    width: boardWidth,
+                    height: boardHeight,
+                });
+
+                layer.bg[i].add(bgNumber[i]);
+                layer.bg[i].add(bgRect[i]);
+                layer.bg[i].add(bgImage[i]);
+
+                stage[i].add(layer.bg[i]);
+                stage[i].add(layer.grid[i]);
+                stage[i].add(layer.main[i]);
+            };
+            if(!highlightStage) {
+                highlightStage = new Konva.Stage({
+                    container: 'highlight-parent',
+                    width: screenSize.width,
+                    height: screenSize.height,
+                });
+                highlightLayer = new Konva.Layer({listening: false, transformsEnabled: 'none'});
+                highlightRect = new Konva.Rect({
+                    x: 0,
+                    y: 0,
+                    width: screenSize.width,
+                    height: screenSize.height,
+                    stroke: 'yellow',
+                    //strokeWidth: (i === activeStage ? 2 * Math.sqrt(numVisBoards) : Math.sqrt(numVisBoards)),
+                    strokeWidth: borderWidth * (1 / conf[numVisBoards].rows) * screenSize.width,
+                    fillEnabled: false,
+                    listening: false
+                });
+                highlightLayer.add(highlightRect);
+                highlightStage.add(highlightLayer);
+            }
+            stageFinished = true;
+            //console.info('prepareStage Finished')
+        };
+
+        async function drawLaserPointer(target, x, y) {
+            //console.log('drawing laserpointer to ' + target);
+            if (!stageFinished) return {'error': true, 'reason': 'stage_not_ready'};
+            if (target !== null) {
+                const layerWidth = layer.main[target].width();
+                const layerHeight = layer.main[target].height();
+                //const tempname = 'c' + parseInt(Date.now());
+                //const selector = '#' + tempname;
+                const laserPoint = new Konva.Circle({
+                    //id: tempname,
+                    fill: laserColor,
+                    radius: layerWidth * laserSize * 0.005,
+                    strokeEnabled: false,
+                    x: x * layerWidth,
+                    y: y * layerHeight,
+                    perfectDrawEnabled: false,
+                    listening: false
+                });
+                if (layer.main[target] === null) {
+                    //console.info('drawLaserPointer: layer is null!');
+                    return {'error': true, 'reason': 'layer_null'};
+                } else {
+                    layer.main[target].add(laserPoint);
+                    tween = new Konva.Tween({
+                        node: laserPoint,
+                        duration: 0.25,
+                        opacity: 0,
+                        onFinish: function() {
+                            laserPoint.destroy()
+                        }
+                    }).play();
+
+                    const mainlaser = layer.main[target].findOne('#mainlaser');
+
+                    if(mainlaser) {
+                        mainlaser.position({x: x * layerWidth, y: y * layerHeight});
+                    } else {
+                        const laserPoint = new Konva.Circle({
+                            id: 'mainlaser',
+                            fill: laserColor,
+                            radius: layerWidth * laserSize * 0.005,
+                            strokeEnabled: false,
+                            x: x * layerWidth,
+                            y: y * layerHeight,
+                            perfectDrawEnabled: false,
+                            listening: false
+                        });
+                        layer.main[target].add(laserPoint);
+                    }
+
+                    layer.main[target].batchDraw();
+                }
+            }
+            return {'error': false}
+        };
+
+        // draw a single shape
+        async function drawShape(shape, target, localBusyDrawingNonce, options) {
+            if (!stageFinished) return {'error': true, 'reason': 'stage_not_ready'};
+            //console.info('drawLine called');
+            const functionCallTime = Date.now();
+            if (localBusyDrawingNonce !== globalBusyDrawingNonce) { return {'error': true, 'reason': 'interrupted'}; }
+            if (target !== null) {
+                //console.info('board: ' + target + ', line: ' + line.id);
+                const layerWidth = layer.main[target].width();
+                const layerHeight = layer.main[target].height();
+                const origDrawStartTime = parseInt(shape.starttime);
+                const strokeWidthPx = pctToPixels(shape.shapedetails.strokeWidth, layerWidth);
+                //const lineTimeDiff = functionCallTime - origDrawStartTime; // how much time has passed since original drawing started
+                var thisShape;
+                switch(shape.shapetype) {
+                    case 'Line':
+                    case 'Polyline':
+                        thisShape = new Konva.Line({
+                            name: shape.name ? shape.name : 'Line',
+                            bezier: shape.shapedetails.bezier,
+                            tension: Number(shape.shapedetails.tension),
+                            stroke: shape.stroke,
+                            strokeEnabled: shape.shapedetails.strokeEnabled,
+                            strokeWidth: strokeWidthPx,
+                            x: shape.x * layerWidth,
+                            y: shape.y * layerHeight,
+                            points: shape.shapedata.length ? [shape.shapedata[0][1] * layerWidth, shape.shapedata[0][2] * layerHeight] : [],
+                            lineCap: 'round',
+                            lineJoin: 'round',
+                            fill: shape.fill,
+                            fillEnabled: shape.shapedetails.fillEnabled,
+                            closed: shape.shapedetails.closed,
+                            shadowForStrokeEnabled: false,
+                            perfectDrawEnabled: false,
+                            strokeScaleEnabled: false, // Needed for cleaner resizing
+                            rotation: shape.shapedetails.rotation || 0,
+                            scaleX: shape.shapedetails.scaleX || 1,
+                            scaleY: shape.shapedetails.scaleY || 1,
+                            globalCompositeOperation: (shape.stroke === 'wipe' ? 'destination-out' : 'source-over')
+                        });
+                        break;
+                    case 'Arrow':
+                        // Support both old and new format of arrow data
+                        let arrowPoints = [];
+                        if(shape.shapedata.length === 4) arrowPoints = [0,0, pctToPixels(shape.shapedata[2], layerWidth), pctToPixels(shape.shapedata[3],layerHeight)]
+                        if(shape.shapedata.length === 2) arrowPoints = [0,0, pctToPixels(shape.shapedata[1][1], layerWidth), pctToPixels(shape.shapedata[1][2],layerHeight)]
+                        thisShape = new Konva.Arrow({
+                            name: 'Line',
+                            stroke: shape.stroke,
+                            strokeWidth: strokeWidthPx,
+                            strokeEnabled: shape.shapedetails.strokeEnabled,
+                            x: shape.x * layerWidth,
+                            y: shape.y * layerHeight,
+                            points: arrowPoints,
+                            lineCap: 'round',
+                            lineJoin: 'round',
+                            closed: shape.shapedetails.closed,
+                            fillEnabled: shape.shapedetails.fillEnabled,
+                            fill: shape.fill,
+                            globalCompositeOperation: (shape.stroke === 'wipe' ? 'destination-out' : 'source-over'),
+                            pointerLength: (strokeWidthPx + 2) * 2,
+                            pointerWidth: (strokeWidthPx + 2) * 2,
+                            rotation: shape.shapedetails.rotation || 0,
+                            scaleX: shape.shapedetails.scaleX || 1,
+                            scaleY: shape.shapedetails.scaleY || 1,
+                        });
+                        break;
+                    case 'Grid':
+                        thisShape = new Konva.Shape({
+                            name: 'Grid',
+                            x: shape.x * layerWidth,
+                            y: shape.y * layerHeight,
+                            width: pctToPixels(shape.shapedetails.width, layerWidth),
+                            height: pctToPixels(shape.shapedetails.height, layerHeight),
+                            hspacing: pctToPixels(shape.shapedetails.hspacing, layerWidth) || 0,
+                            vspacing: pctToPixels(shape.shapedetails.vspacing, layerHeight) || 0,
+                            sceneFunc: makeKonvaGrid,
+                            fillEnabled: shape.shapedetails.fillEnabled,
+                            fill: shape.fill,
+                            stroke: shape.stroke,
+                            strokeWidth: strokeWidthPx,
+                            rotation: shape.shapedetails.rotation || 0
+                        });
+                        break;
+                    case 'Rect':
+                        thisShape = new Konva.Rect({
+                            name: 'Rect',
+                            stroke: shape.stroke,
+                            strokeWidth: strokeWidthPx,
+                            x: shape.x * layerWidth,
+                            y: shape.y * layerHeight,
+                            fill: shape.fill,
+                            fillEnabled: shape.shapedetails.fillEnabled,
+                            width: pctToPixels(shape.shapedetails.width, layerWidth),
+                            height: pctToPixels(shape.shapedetails.height, layerHeight),
+                            rotation: shape.shapedetails.rotation || 0,
+                            globalCompositeOperation: (shape.stroke === 'wipe' ? 'destination-out' : 'source-over'),
+                            shadowForStrokeEnabled: false,
+                            perfectDrawEnabled: false
+                        });
+                        break;
+                    case 'Ellipse':
+                    case 'Circle':
+                        var radius = null;
+                        if(typeof shape.shapedetails.radius !== 'undefined') radius = pctToPixels(shape.shapedetails.radius, layerWidth);
+                        thisShape = new Konva.Ellipse({
+                            name: 'Ellipse',
+                            radiusX: (radius ? radius : pctToPixels(shape.shapedetails.radiusX, layerWidth)),
+                            radiusY: (radius ? radius : pctToPixels(shape.shapedetails.radiusY, layerHeight)),
+                            rotation: shape.shapedetails.rotation || 0,
+                            stroke: shape.stroke,
+                            strokeEnabled: shape.shapedetails.strokeEnabled,
+                            strokeWidth: strokeWidthPx,
+                            x: shape.x * layerWidth,
+                            y: shape.y * layerHeight,
+                            fill: shape.fill,
+                            fillEnabled: shape.shapedetails.fillEnabled,
+                            globalCompositeOperation: (shape.stroke === 'wipe' ? 'destination-out' : 'source-over'),
+                            shadowForStrokeEnabled: false,
+                            perfectDrawEnabled: false
+                        });
+                        break;
+                    case 'Dot':
+                        //console.info('radius: ', shape.shapedetails.radius , ' in pixels: ' , pctToPixels(shape.shapedetails.radius, layerWidth));
+                        thisShape = new Konva.Circle({
+                            name: 'Dot',
+                            radius: pctToPixels(shape.shapedetails.radius, layerWidth),
+                            stroke: shape.stroke,
+                            strokeWidth: 0,
+                            fillEnabled: true,
+                            fill: shape.stroke,
+                            x: shape.x * layerWidth,
+                            y: shape.y * layerHeight,
+                        });
+                        break;
+                    default:
+                        // Bail out if shape not known, but don't crash
+                        console.log('Unknown shape type found!');
+                        return {'error': false, 'reason': 'unknown shape type'};
+                }
+                thisShape.setAttr("dbId", shape.id);
+                if (layer.main[target] === null) {
+                    //console.info('drawLine: layer is null!');
+                    return {'error': true, 'reason': 'layer_null'};
+                } else {
+                    layer.main[target].add(thisShape);
+                    if(shape.shapedata && shape.shapetype !== 'Arrow') {
+                        let linePoints = []; // Helper array into which we push coordinates instead of concat for better performance
+                        for (const point of shape.shapedata) {
+                            if (!options.drawAsap) {
+                                let newPoints = thisShape.points().concat(point[1] * layerWidth, point[2] * layerHeight);
+                                thisShape.points(newPoints);
+                                let currentTime = Date.now();
+                                const currentPointTimeOffset = parseInt(point[0]);
+                                pointWaitTime = functionCallTime + currentPointTimeOffset - currentTime;
+                                //console.info("pointwaittime: " + pointWaitTime);
+                                if (pointWaitTime > 5) {
+                                    await sleep(pointWaitTime - 2);
+                                }
+                                if (localBusyDrawingNonce !== globalBusyDrawingNonce) { return {'error': true, 'reason': 'interrupted'}; }
+                                thisShape.draw();
+                            } else {
+                                // If drawing asap, just push the new points to temp array and move on
+                                linePoints.push(point[1] * layerWidth, point[2] * layerHeight);
+                            }
+                        }
+                        if(options.drawAsap) {
+                            // Use our temp array to update all points of the line in one go
+                            thisShape.points(linePoints);
+                        }
+                        thisShape.draw();
+                        //console.info('drawing shape id',shape.id);
+                    }
+                }
+            }
+            return {'error': false}
+        };
+
+        // options: skipPenUps, drawAsap
+        function drawGrid(boardid, settings) {
+            if (!stageFinished) return;
+            if (!settings) return;
+            //console.info('drawGrid called for board ' + boardid);
+            const target = getPhysicalCanvasId(boardid);
+            if (target === null) {
+                //console.info('drawGrid: target is null!');
+                return;
+            }
+            if (layer.main[target] === null || layer.main[target] === undefined) {
+                //console.info('drawGrid: layer does not exist!');
+                return;
+            }
+            const layerWidth = layer.bg[target].width();
+            const layerHeight = layer.bg[target].height();
+            layer.grid[target].destroyChildren();
+            if(!layerWidth || !layerHeight) return;
+
+            if(settings.visible && settings.present) {
+                let coords = [];
+                let cellWidth = settings.cellWidth || 38;
+                let cellHeight = settings.cellHeight || 20;
+                let hSpacing, vSpacing;
+                /*if(settings.square) {
+                    vSpacing = layerWidth / cellWidth;
+                    if(settings.aspect) {
+                        hSpacing = vSpacing * (settings.aspect / (layerWidth/layerHeight));
+                        //console.info('using aspect ', settings.aspect, ' with resulting hSpacing ', hSpacing);
+                    } else {
+                        hSpacing = vSpacing;
+                    }
+                    cellHeight = Math.floor(layerHeight / hSpacing);
+                } else {*/
+                hSpacing = layerHeight * cellHeight * 0.01;
+                vSpacing = layerWidth * cellWidth * 0.01;
+
+                let numVCells = layerHeight / hSpacing;
+                let numHCells = layerWidth / vSpacing;
+
+                //}
+                //console.info('hspacing: ', hSpacing, ', vspacing: ', vSpacing, ', aspect: ', settings.aspect);
+                for(var h = 1; h <= numVCells; h++) {
+                    coords.push({x: 0, y: h * hSpacing});
+                }
+                for(var w = 1; w <= numHCells; w++) {
+                    coords.push({x: w * vSpacing, y: 0});
+                }
+                
+                coords.forEach((coord) => {
+                    const gridLine = new Konva.Line({
+                        x: coord.x,
+                        y: coord.y,
+                        points: [0, 0, coord.x ? 0: layerWidth, coord.y ? 0 : layerWidth],
+                        stroke: settings.stroke || '#fff',
+                        strokeWidth: Number(settings.strokeWidth * layerWidth * 0.01) || 1,
+                        strokeEnabled: true,
+                        opacity: Number(settings.opacity) || 0.5
+                    });
+                    layer.grid[target].add(gridLine);
+                });
+            }
+            //layer.grid[target].batchDraw();
+            //console.info('setting playShapesGoingOn to false');
+        };
+
+        // options: skipPenUps, drawAsap
+        async function playShapes(boardid, json, options) {
+            const localBusyDrawingNonce = globalBusyDrawingNonce = new Object();
+            //console.info('setting playShapesGoingOn to true');
+            playShapesGoingOn = true;
+            if (!stageFinished) return;
+            //console.info('playShapes called for board ' + boardid);
+            const target = getPhysicalCanvasId(boardid);
+            if (target === null) {
+                //console.info('playShapes: target is null!');
+                playShapesGoingOn = false;
+                return;
+            }
+            if (layer.main[target] === null || layer.main[target] === undefined) {
+                //console.info('playShapes: layer does not exist!');
+                playShapesGoingOn = false;
+                return;
+            }
+            const functionCallTime = Date.now(); // the time we called this replay function
+            let currentPointTime;
+            let currentLineStartTime;
+            let pointWaitTime;
+            let lineWaitTime;
+            let thisLine = '';
+            const layerWidth = layer.main[target].width();
+            const layerHeight = layer.main[target].height();
+            layer.main[target].destroyChildren();
+            if (json.length) {
+                const origDrawStartTime = parseInt(json[0].starttime);
+                let replayTimeDiff = functionCallTime - origDrawStartTime; // how much time has passed since original drawing started
+                for (const shape of json) {
+                    if (!options.drawAsap) {
+                        currentLineStartTime = Date.now();
+                        lineWaitTime = (parseInt(shape.starttime) + replayTimeDiff) - currentLineStartTime;
+                        if (!options.skipPenUps) { // draw shapes without a delay between each
+                            //console.info("lineWaitTime: " + lineWaitTime);
+                            if (localBusyDrawingNonce !== globalBusyDrawingNonce) {
+                                //console.info('lost!');
+                            // board changed while drawing... request the board to redraw
+                                playShapesGoingOn = false;
+                                const token = getToken();
+                                if(token) {
+                                    socket.emit('request_boards', {sid: sid, token: token, from: boardid, to: boardid });
+                                } else {
+                                    // XXX we have lost session at this point
+                                    return;
+                                }
+                                return;
+                            } else {
+                                if (lineWaitTime > 5) {
+                                    await sleep(lineWaitTime - 2);
+                                }
+                            }
+                        }
+                    }
+                    if (localBusyDrawingNonce !== globalBusyDrawingNonce) {
+                        //console.info('lost 2!');
+                        // board changed while drawing... request the board to redraw
+                        playShapesGoingOn = false;
+                        const token = getToken();
+                        if(token) {
+                            socket.emit('request_boards', {sid: sid, token: token, from: boardid, to: boardid });
+                        } else {
+                            // XXX we have lost session at this point
+                            return;
+                        }
+                        return;
+                    } else {
+                        const result = await drawShape(shape, target, localBusyDrawingNonce, options);
+                        if(result.error) {
+                            //console.info(result.reason + ' at board ' + shape.boardid);
+                        }
+                    }
+                }
+            }
+            if (options.drawAsap) {
+                layer.main[target].batchDraw();
+            }
+            //console.info('setting playShapesGoingOn to false');
+            playShapesGoingOn = false;
+        };
+
+        /**
+         * If board is in the current view range, do the following:
+         * - Get cached data for board (may request new data if not up to date)
+         * - Update bgnumber (board number)
+         * - Load background image from given URL if visible
+         * - Change bgrect (layer.bg) color to board color, or remove fill to reveal board number
+         * - Draw grid if present on current board (on layer.bg)
+         * - Draw board data on layer.main if available, else clear the layer
+         * 
+         * Returns false if viewer not yet initialized, or board not in view
+         * */
+        function initBoard(board) {
+            if(!gotSettings) return false;
+            if(!boardIsInView(board)) return false;
+            //console.info('initboard:',board, from, to);
+            const data = getCachedBoard(board, offline); // use second argument to use backup when offline
+            //if(offline && !data) return false;
+            //if(!data) console.log('no data for board ' + board); //return;// throw('error!');
+            //console.info('got a socket message board_data for board ' + json.boardid);
+            const physid = getPhysicalCanvasId(board);
+            if(physid) {
+                if(layer.bg[physid]) {
+                    const bgrect = layer.bg[physid].findOne('Rect');
+                    const bgnumber = layer.bg[physid].findOne('Text');
+                    if(bgnumber) {
+                        bgnumber.text(board); // update board number
+                    }
+                    /**
+                     * If a background image is visible, check that the url exists
+                     * and create an image object for the physical canvas.
+                     * TODO: check the url format?
+                     * */
+                    if(data?.data?.settings?.bg?.visible) {
+                        if(data?.data?.settings?.bg?.url.length) {
+                            imageObj[physid] = new Image();
+                            imageObj[physid].onload = function() {
+                                bgImage[physid].image(imageObj[physid]);
+                            };
+                            imageObj[physid].src = data.data.settings.bg.url;
+                            bgImage[physid].visible(true);
+                        } else {
+                            console.error('Background image URL missing');
+                            bgImage[physid].visible(false);
+                        }
+                    } else {
+                        bgImage[physid].visible(false);
+                    }
+                    if(bgrect) {
+                        //console.info(board, activeBoard);
+                        //console.info('setting bgcolor ' + data.data.bgcolor + ' to ' + physid);
+                        if(data?.data?.settings?.color) {
+                            bgrect.attrs.fillEnabled = true;
+                            bgrect.attrs.fill = data.data.settings.color;
+                        } else {
+                            bgrect.attrs.fillEnabled = false;
+                            bgrect.attrs.fill = '#000';//bgcolor[physid];
+                        }
+                        layer.bg[physid].draw();
+                    }
+                    if(data?.data?.settings?.grid) {
+                        drawGrid(board, data.data.settings.grid);
+                    } else {
+                        layer.grid[physid].destroyChildren();
+                        layer.grid[physid].draw();
+                    }
+                    if(data?.data?.data?.length) {
+                        // Need to chain playLines commands for each board so they don't mess with the drawingNonces
+                        playShapesChain(board, data.data.data, { skipPenUps: 1, drawAsap: 1 })
+                    } else {
+                        // if no data, we clear what we have and replace with a board number
+                        layer.main[physid].destroyChildren();
+                        layer.main[physid].draw();
+                        //console.info(layer.main[physid]);
+                    }
+                    return true;
+                } else {
+                    //console.info('physid ',physid,'has no bg rect');
+                    return false;
+                }
+            } else return false;
+        };
+
+        function initSocketCallbacks() {
+            // TODO: find a better way to remove listeners (if even needed)
+            socket.off('disconnect');
+            socket.off('presenter_connected');
+            socket.off('presenter_disconnected');
+            socket.off('password_changed');
+            socket.off('login_failed');
+            socket.off('board_data');
+            socket.off('shape_modified');
+            socket.off('shapes_recolored');
+            socket.off('shapes_deleted');
+            socket.off('draw_line');
+            socket.off('draw_shape');
+            socket.off('laserloc');
+            socket.off('laser_on');
+            socket.off('laser_off');
+            socket.off('laser_off');
+            socket.off('play_shapes');
+            socket.off('change_board_settings');
+            socket.off('set_active_board');
+            socket.off('clear_board');
+            socket.off('clear_all');
+
+            socket.on('disconnect', function() {
+                disconnectSocket();
+            });
+
+            socket.on('presenter_connected', function() {
+                Toastify({
+                text: "Board presenter connected",
+                duration: 1500,
+                gravity: "top",
+                position: 'left',
+                }).showToast();
+            });
+
+            socket.on('presenter_disconnected', function() {
+                Toastify({
+                text: "Board presenter disconnected",
+                duration: 1500,
+                gravity: "top",
+                position: 'left',
+                className: 'toastify-error'
+                }).showToast();
+            });
+
+            socket.on('password_changed', function(error) {
+                //console.info('Password changed, removing any access tokens')
+                sessionStorage.removeItem('viewertoken_' + sid);
+                Toastify({
+                text: "Board password has been changed. Please wait 3 seconds for page to refresh.",
+                duration: 3000,
+                gravity: "top",
+                position: 'left',
+                className: 'toastify-error',
+                callback: function(){
+                    // We need to set promptpw to true in case there was not a password previously set
+                    var queryParams = new URLSearchParams(location.search);
+                    queryParams.set('promptpw', 'true');
+                    location.search = queryParams.toString();
+                }
+                }).showToast();
+            });
+
+            socket.on('login_failed', function(error) {
+                //console.info('Login failed, removing any access tokens')
+                sessionStorage.removeItem('viewertoken_' + sid);
+                Toastify({
+                text: error,
+                duration: 3000,
+                gravity: "top",
+                position: 'left',
+                className: 'toastify-error',
+                callback: function(){location.reload();}
+                }).showToast();
+                socket.disconnect();
+            });
+
+            socket.on('board_data', function (json) {
+                if (!gotSettings) return;
+                if(!cacheIsUpToDate(json.data.boardid, json.mod)) {
+                    setCachedBoard(json.data.boardid, {mod: json.mod, data: json.data});
+                    initBoard(json.data.boardid); // returns immediately if board is not in view
+                }
+            });
+
+            socket.on('shape_modified', function (json) {
+                //console.info('got a socket message shape_modified');
+                cacheDirty[json.boardid] = true;
+                //console.info('setting board ', json.boardid, ' as dirty');
+                const physid = getPhysicalCanvasId(json.boardid);
+                const modShape = layer.main[physid].findOne(node => {
+                    return node.getAttr('dbId') === json.id
+                })
+                if(modShape !== undefined) {
+                    // For now, just reload the board if we need to move a shape up or down the stack
+                    if(json.starttime) {
+                        socket.emit('request_boards', {sid: sid, token: getToken(), from: json.boardid, to: json.boardid });
+                    } else {
+                        if(typeof(json.x) !== 'undefined') modShape.x(json.x * layer.main[physid].width());
+                        if(typeof(json.y) !== 'undefined') modShape.y(json.y * layer.main[physid].height());
+                        if(typeof(json.stroke) !== 'undefined') modShape.stroke(json.stroke);
+                        if(typeof(json.fill) !== 'undefined') modShape.fill(json.fill);
+
+                        // Only process options from shapedetails if given
+                        if(typeof(json.shapedetails) !== 'undefined') {
+                            if(typeof(json.shapedetails.scaleX) !== 'undefined') modShape.scaleX(json.shapedetails.scaleX);
+                            if(typeof(json.shapedetails.scaleY) !== 'undefined') modShape.scaleY(json.shapedetails.scaleY);
+
+                            if(modShape.attrs.name === 'Dot') {
+                                if(typeof(json.shapedetails.radius) !== 'undefined') modShape.radius(pctToPixels(json.shapedetails.radius, layer.main[physid].width()));
+                            } else {
+                                // Rotation only matters for shapes other than Dot
+                                if(typeof(json.shapedetails.rotation) !== 'undefined') modShape.rotation(json.shapedetails.rotation);
+
+                                if(modShape.attrs.name === 'Line') {
+                                    if(typeof(json.shapedetails.bezier) !== 'undefined') modShape.bezier(json.shapedetails.bezier);
+                                    if(typeof(json.shapedetails.tension) !== 'undefined') modShape.tension(Number(json.shapedetails.tension));
+                                    if(typeof(json.shapedetails.closed) !== 'undefined') modShape.closed(json.shapedetails.closed);
+                                } else {
+                                    if(modShape.attrs.name === 'Ellipse') {
+                                        if(typeof(json.shapedetails.radiusX) !== 'undefined') modShape.radiusX(pctToPixels(json.shapedetails.radiusX, layer.main[physid].width()));
+                                        if(typeof(json.shapedetails.radiusY) !== 'undefined') modShape.radiusY(pctToPixels(json.shapedetails.radiusY, layer.main[physid].height()));
+                                    } else {
+                                        if(modShape.attrs.name === 'Rect' || modShape.attrs.name === 'Grid') {
+                                            if(typeof(json.shapedetails.width) !== 'undefined') modShape.width(pctToPixels(json.shapedetails.width, layer.main[physid].width()));
+                                            if(typeof(json.shapedetails.height) !== 'undefined') modShape.height(pctToPixels(json.shapedetails.height, layer.main[physid].height()));
+                                        }
+                                    }
+                                }
+                            }
+                            if(typeof(json.shapedetails.strokeWidth) !== 'undefined') modShape.strokeWidth(pctToPixels(json.shapedetails.strokeWidth, layer.main[physid].width()));
+                            if(typeof(json.shapedetails.strokeEnabled) !== 'undefined') modShape.strokeEnabled(json.shapedetails.strokeEnabled);
+                            if(typeof(json.shapedetails.fillEnabled) !== 'undefined') modShape.fillEnabled(json.shapedetails.fillEnabled);
+                        }
+                        if(typeof(json.shapedata) !== 'undefined') {
+                            const layerWidth = layer.main[physid].width();
+                            const layerHeight = layer.main[physid].height();
+
+                            modShape.points(json.shapedata.flatMap(x => [x[1] * layerWidth, x[2] * layerHeight]));
+                        }
+
+                        layer.main[physid].batchDraw();
+                    }
+                } else {
+                    const token = getToken();
+                    if(token) {
+                        socket.emit('request_boards', {sid: sid, token: token, from: json.boardid, to: json.boardid });
+                    } else {
+                        // XXX we have lost session at this point
+                        return;
+                    }
+                }
+            });
+
+            /** 
+             * Act on the shapes_recolored message.
+             * Try to recolor just the deleted shapes to avoid requesting the whole board.
+             * If this doesn't succeed, refresh the whole board to avoid getting out of sync.
+             */
+            socket.on('shapes_recolored', function (json) {
+                var BreakException = {};
+                cacheDirty[activeBoard] = true;
+                //console.info('setting board ', activeBoard, ' as dirty');
+                //console.info('got a socket message shape_recolored');
+                const physid = getPhysicalCanvasId(activeBoard); // use the active board as we don't pass the board id here
+                try {
+                    json.shapeids.forEach(shapeid => {
+                        const deletedShape = layer.main[physid].findOne(node => {
+                            return node.getAttr('dbId') === shapeid
+                        })
+                        if(deletedShape !== undefined) {
+                            if(deletedShape.attrs.name === 'Dot') {
+                                deletedShape.fill(json.color);
+                            } else {
+                                deletedShape.stroke(json.color);
+                            }
+                        } else throw BreakException;
+                    })
+                } catch (e) {
+                    if(e === BreakException) {
+                        const token = getToken();
+                        if(token) {
+                            socket.emit('request_boards', {sid: sid, token: token, from: activeBoard, to: activeBoard });
+                        } else {
+                            // XXX we have lost session at this point
+                            return;
+                        }
+                    } else throw e;
+                }
+            });
+
+            /** 
+             * Act on the shapes_deleted message.
+             * Try to destroy just the deleted shapes to avoid requesting the whole board.
+             * If this doesn't succeed, refresh the whole board to avoid getting out of sync.
+             */
+            socket.on('shapes_deleted', function (json) {
+                var BreakException = {};
+                cacheDirty[activeBoard] = true;
+                //console.info('setting board ', activeBoard, ' as dirty');
+                //console.info('got a socket message shape_deleted');
+                const physid = getPhysicalCanvasId(activeBoard);
+                try {
+                    json.shapeids.forEach(shapeid => {
+                        const deletedShape = layer.main[physid].findOne(node => {
+                            return node.getAttr('dbId') === shapeid
+                        })
+                        if(deletedShape !== undefined) {
+                            deletedShape.destroy();
+                        } else throw BreakException;
+                    })
+                } catch (e) {
+                    if(e === BreakException) {
+                        const token = getToken();
+                        if(token) {
+                            socket.emit('request_boards', {sid: sid, token: token, from: activeBoard, to: activeBoard });
+                        } else {
+                            // XXX we have lost session at this point
+                            return;
+                        }
+                    } else throw e;
+                }
+            });
+
+            socket.on('draw_shape', function (shape) {
+                var drawAsap = 0;
+
+                // if we have partially drawn long line present, we destroy it and draw the final line asap
+                const target = getPhysicalCanvasId(shape.boardid);
+                if(target) {
+                    const tempLine = layer.main[target].findOne('.TempLine');
+                    if(tempLine) {
+                        tempLine.destroy();
+                        drawAsap = 1;
+                    }
+
+                    //console.info('got a socket message draw_line');
+                    cacheDirty[shape.boardid] = true;
+                    //console.info('setting board ', shape.boardid, ' as dirty');
+                    // Sending a command for new shape cancels the animation of the previous shape
+                    const localBusyDrawingNonce = globalBusyDrawingNonce = new Object();
+                    drawShapeChain(shape, target, globalBusyDrawingNonce, { drawAsap: drawAsap })
+                    .then((result) => {
+                        if(result.error) {
+                            //console.info(result.reason + ' at board ' + shape.boardid);
+                            const token = getToken();
+                                if(token) {
+                                    socket.emit('request_boards', {sid: sid, token: token, from: shape.boardid, to: shape.boardid });
+                                } else {
+                                // XXX we have lost session at this point
+                                return;
+                            }
+                        }
+                    });
+                }
+            });
+
+            socket.on('draw_partial_shape', function (shape) {
+                const target = getPhysicalCanvasId(shape.boardid);
+                if(target) {
+                    const tempLine = layer.main[target].findOne('.TempLine');
+                    if(tempLine) {
+                        //console.info('destroying temp line: ' + tempLine.name());
+                        tempLine.destroy();
+                    }
+                    shape['name'] = 'TempLine';
+                    //console.info('got a socket message draw_line');
+                    cacheDirty[shape.boardid] = true;
+                    //console.info('setting board ', shape.boardid, ' as dirty');
+                    // Sending a command for new shape cancels the animation of the previous shape
+                    const localBusyDrawingNonce = globalBusyDrawingNonce = new Object();
+                    drawShapeChain(shape, target, globalBusyDrawingNonce, { drawAsap: 1 })
+                    .then((result) => {
+                        if(result.error) {
+                            //console.info(result.reason + ' at board ' + shape.boardid);
+                            const token = getToken();
+                                if(token) {
+                                    socket.emit('request_boards', {sid: sid, token: token, from: shape.boardid, to: shape.boardid });
+                                } else {
+                                // XXX we have lost session at this point
+                                return;
+                            }
+                        }
+                    });
+                }
+            });
+
+            socket.on('laserloc', function (line) {
+                //console.info('got a socket message laserloc');
+                const target = getPhysicalCanvasId(line.b);
+                if(target) {
+                    drawLaserPointer(target, line.x, line.y);
+                }
+            });
+
+            socket.on('laser_on', function (json) {
+                //console.info('got a socket message laserloc');
+                if(json.color.length === 7) laserColor = json.color;
+                if(json.size) laserSize = Number(json.size);
+                removeLasers();
+            });
+
+            socket.on('laser_off', function () {
+                //console.info('got a socket message laserloc');
+                removeLasers();
+            });
+
+            socket.on('play_shapes', function (json) {
+                //console.info('got a socket message play_shapes for board ' + json.boardid);
+                playShapes(json.boardid, json.data, json.options);
+            });
+
+            socket.on('change_board_settings', function (json) {
+                if(!json.boardid) {
+                    console.error('change_board_settings: Boardid missing');
+                    return;
+                }
+                //console.info('got a socket message change_board_settings',json);
+                cacheDirty[json.boardid] = true;
+                //console.info('setting board ', json.boardid, ' as dirty');
+                const physid = getPhysicalCanvasId(json.boardid);
+                if(physid) {
+                    if(json.settings?.settings?.bg?.visible === true) {
+                        // If image object does not exist yet, create it
+                        if(imageObj[physid] === undefined) {
+                            imageObj[physid] = new Image();
+                            imageObj[physid].onload = function() {
+                                bgImage[physid].image(imageObj[physid]);
+                            };
+                            imageObj[physid].src = json.settings?.settings?.bg?.url || '';
+                        } else {
+                            if(imageObj[physid].src !== json.settings?.settings?.bg?.url) {
+                                imageObj[physid].src = json.settings?.settings?.bg?.url || '';
+                            }
+                        }
+                        bgImage[physid].visible(true);
+                    } else {
+                        bgImage[physid].visible(false);
+                    }
+                    const bgrect = layer.bg[physid].findOne('Rect');
+                    if(bgrect) {
+                        if(json.settings?.color) {
+                            bgrect.attrs.fill = json.settings?.color;
+                            layer.bg[physid].draw();
+                        }
+                    }
+                    if(json.settings?.settings?.grid) {
+                        drawGrid(json.boardid, json.settings.settings.grid);
+                    } else {
+                        layer.bg[physid].draw();
+                    }
+                    //document.body.style.backgroundColor = color;
+                } else {
+                    console.log("No physical layer found for board " + json.boardid);
+                }
+            });
+
+            socket.on('set_active_board', function (json) {
+                //console.info('got a socket message set_active_board for ' + json.ab);
+                setActiveBoard(json)
+            });
+
+            // reconfigure_boards is signaled when the number of visible boards change
+            // and we need to recreate the stages (boards) in Konva
+            socket.on('reconfigure_boards', function (json) {
+                //console.info('got a socket message reconfigure_boards');
+                numVisBoards = json.nvb;
+                // only set these if we want to force it from client side
+                if (json.width > 0) screenSize.width = json.width;
+                if (json.height > 0) screenSize.height = json.height;
+                if(typeof(json.sb) === 'undefined') console.log('Starting board missing!');
+                setFromTo(json.sb);
+                reconfigureBoards();
+            });
+
+            // clear one board
+            socket.on('clear_board', function (json) {
+                //console.info('got a socket message clear_board');
+                cacheDirty[json.boardId] = true;
+                //console.info('setting board ', json.boardId, ' as dirty');
+                const board = getPhysicalCanvasId(json.boardid);
+                if (board !== null) {
+                    layer.main[board].destroyChildren();
+                    layer.main[board].batchDraw();
+                }
+            });
+
+            // clear all boards
+            socket.on('clear_all', function () {
+                backupAndDeleteCachedBoards();
+            });
+        }
+
+        // Start the engine...
+        initializeGridView();
+    </script>
+</body>
+
+</html>

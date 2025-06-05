@@ -1,0 +1,185 @@
+@import url('https://fonts.googleapis.com/css2?family=Neucha&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Caveat:wght@700&display=swap');
+
+/* force canvas to fill screen horizontally */
+html, body, div#root, div#root>div, div.container-fluid {
+  height: 100%;
+}
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /*overflow: hidden;*/
+  background-color: rgb(33, 37, 41) !important;
+}
+
+h1, h2 {
+  font-family: 'Caveat', cursive;
+  color: #f5f5f5;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+.bg-dark, .darkmenu p, .bg-dark, .darkmenu small, .bg-dark, .darkmenu label {
+  color: #f5f5f5;
+}
+
+/* Fix for presenter UI menus, TODO: better */
+.form-check.dark label {
+  color: #212529;
+}
+
+/* Ordering buttons' "icons" */
+.btn.asc::after {
+  content: '\25BC';
+  display: inline-block;
+  margin-left: 0.5em;
+}
+
+.btn.desc::after {
+  content: '\25B2';
+  display: inline-block;
+  margin-left: 0.5em;
+}
+
+.colorbox{
+	width:25px;
+  height:25px;
+  background-color: black;
+  display: inline-block;
+  margin-bottom: -4px;
+}
+
+.colorbox.disabled {
+	opacity: 0;
+}
+
+.samplebox {
+	width:40px;
+  height:40px;
+  position: relative;
+  background-color: black;
+  display: inline-block;
+  margin-left: 30px;
+  margin-bottom: -8px;
+  border: solid 3px white;
+}
+
+/* Fix small buttons too high (TODO: find the reason this happens) */
+.btn-sm {
+  height: 31px;
+}
+
+/* Some breathing room for dropdowns */
+.dropdown-menu.show {
+    padding: 5px;
+}
+
+/* Better visual separation for menus */
+.dropdown-menu {
+  border-width: 10px !important;
+  border-color: rgba(0, 0, 0, 0.35) !important;
+}
+
+.dropdown-menu
+
+/* Color picker styles */
+.picker__swatch {
+  width: 30px;
+  height: 30px;
+  margin: 5px;
+  border: none;
+  padding: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+}
+
+.thumbnail {
+  margin: 1px;
+}
+
+.thumbnail.active {
+  border: 4px solid yellow;
+}
+
+/* Make room for board thumbnails */
+.tn-1, .tn-4 {
+    min-width: 400px;
+}
+
+.tn-9 {
+    min-width: 590px;
+}
+
+.tn-16 {
+    min-width: 790px;
+}
+
+.width-1 .dropdown-menu, .width-2 .dropdown-menu {
+  min-width: 511px;
+}
+
+.width-4 .dropdown-menu {
+  width: 511px;
+}
+
+.width-9 .dropdown-menu {
+  width: 711px;
+}
+
+.width-16 .dropdown-menu {
+  min-width: 921px;
+}
+
+.tnwrapper {
+  display: inline-block;
+  position: relative;
+  height: 110px;
+}
+
+.boardnumbers{
+  font-size:12px;
+  background-color:black;
+  width:16px;
+  text-align: center;
+  color:#fff;
+  z-index: 2;
+  border-radius: 3px;
+  position: absolute;
+  left: 10px;
+  top: 10px;
+}
+
+/* Sidebar styles */
+.sidebar-box {
+  padding: 1rem;
+  border: .1rem solid #ececec;
+  border-width: .1rem;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  background-color: lightgrey;
+}
+
+.bg-dark .sidebar-box {
+  background-color: #284646;
+}
+
+.laserpicker .react-colorful {
+  width: auto;
+  height: 30px;
+}
+
+.laserpicker .react-colorful__hue {
+  border-radius: 5px;
+}
+
+.laserpicker .react-colorful__saturation {
+  display: none;
+}

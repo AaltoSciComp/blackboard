@@ -1,0 +1,93 @@
+services:
+  blackboard-db:
+    image: blackboard-db
+    pull_policy: build
+    init: true
+    build: 
+      context: ./db
+      args:
+        - TZ=${TZ}
+    container_name: blackboard-db
+    volumes:
+      - bbdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_USER: blackboard
+      POSTGRES_DB: blackboard
+      TZ: ${TZ}
+      PGTZ: ${TZ}
+    networks:
+      - database
+
+  # Node.js backend
+  blackboard-server:
+    build: 
+      context: ./server
+      target: dev
+    image: blackboard-server
+    pull_policy: build
+    init: true
+    container_name: blackboard-server
+    # restart not defined as we want to fix issues before restarting, and nodemon will handle
+    # this once the source code has been modified
+    ports:
+      - ${NODE_PORT_DEV}:${NODE_PORT_DEV}
+      - "9229:9229" # node.js debugging port
+    volumes:
+      - ./server/src:/srv/app/server/src
+      - ./server/public:/srv/app/server/public:consistent
+    depends_on:
+      blackboard-db:
+        condition: service_started
+    environment:
+      NODE_SERVER_PORT: ${NODE_PORT_DEV}
+      HOME: /home
+      TZ: ${TZ}
+      # cert paths not needed here as we run over http
+    networks:
+      - app
+      - database
+    command: npm run dev
+    #command: # startup command for debugging node.js
+      #- node
+      #- "--inspect-brk=0.0.0.0"
+      #- "." 
+  
+  # React frontend
+  blackboard-client:
+    build:
+      context: ./client
+      target: build-deps # Don't use nginx in development, only build the first step
+      args:
+        USE_NGINX: "false"
+    image: blackboard-client
+    pull_policy: build
+    container_name: blackboard-client
+    init: true
+    ports:
+      - ${VITE_PORT}:${VITE_PORT}
+    volumes:
+      - ./client/src:/srv/app/client/src
+      #- ./client/public:/srv/app/client/public
+    environment:
+      VITE_PORT: ${VITE_PORT}
+      PORT: ${VITE_PORT} # npm run start uses the PORT defined here
+      HOME: /home
+      TZ: ${TZ}
+    depends_on:
+      blackboard-server:
+        condition: service_started
+    networks:
+      - app
+    #user: $USER_ID
+    stdin_open: true
+    command: npm run start # run the hot-reloading version in development
+  
+volumes:
+  bbdata:
+
+networks:
+  app:
+    driver: bridge
+  database:
+    driver: bridge

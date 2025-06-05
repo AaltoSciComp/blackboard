@@ -1,0 +1,207 @@
+NOTICE
+------
+
+This project includes third-party software components that are licensed under their respective open source licenses. Below is a list of the included software and their licenses.
+
+CLIENT DEPENDENCIES
+-------------------
+1. bootstrap
+   - License: MIT
+   - Source: https://github.com/twbs/bootstrap
+
+2. date-fns
+   - License: MIT
+   - Source: https://github.com/date-fns/date-fns
+
+3. downloadjs
+   - License: MIT
+   - Source: https://github.com/rndme/download
+
+4. konva
+   - License: MIT
+   - Source: https://github.com/konvajs/konva
+
+5. react
+   - License: MIT
+   - Copyright: Facebook
+   - Source: https://github.com/facebook/react
+
+6. react-bootstrap
+   - License: MIT
+   - Source: https://github.com/react-bootstrap/react-bootstrap
+
+7. react-bootstrap-icons
+   - License: MIT
+   - Source: https://github.com/ismamz/react-bootstrap-icons
+
+8. react-colorful
+   - License: MIT
+   - Source: https://github.com/omgovich/react-colorful
+
+9. react-dom
+   - License: MIT
+   - Copyright: Facebook
+   - Source: https://github.com/facebook/react
+
+10. react-hot-toast
+    - License: MIT
+    - Source: https://github.com/timolins/react-hot-toast
+
+11. react-idle-timer
+    - License: MIT
+    - Source: https://github.com/SupremeTechnopriest/react-idle-timer
+
+12. react-konva
+    - License: MIT
+    - Source: https://github.com/konvajs/react-konva
+
+13. react-router-dom
+    - License: MIT
+    - Source: https://github.com/remix-run/react-router
+
+14. socket.io-client
+    - License: MIT
+    - Source: https://github.com/socketio/socket.io-client
+
+15. tinycolor2
+    - License: MIT
+    - Source: https://github.com/bgrins/TinyColor
+
+16. toastify-js
+    - License: MIT
+    - Source: https://github.com/apvarun/toastify-js/
+
+17. use-debounce
+    - License: MIT
+    - Source: https://github.com/xnimorz/use-debounce
+
+In addition, the client software includes code adapted from the following:
+
+1. In /client/src/hooks/use-resize-observer.js
+    - Adapted from TypeScript from the usehooks-ts library by Julien Caron
+    - License: MIT
+    - https://github.com/juliencrn/usehooks-ts/
+
+2. In /client/src/hooks/useInterval.js
+    - Directly copied custom React hook from a blog post on February 4, 2019 by Dan Abramov
+    - Source: https://overreacted.io/making-setinterval-declarative-with-react-hooks/
+
+3. In /client/src/hooks/usePrevious.js
+    - Directly copied custom hook from a blog post on May 1, 2024 by Ohans Emmanuel
+    - Source: https://blog.logrocket.com/accessing-previous-props-state-react-hooks/
+
+4. In /client/src/hooks/useSortableData.js
+    - Directly copied custom hook from a blog post on Mar 20, 2020 by Kristofer Giltvedt Selbekk
+    - Source: https://www.smashingmagazine.com/2020/03/sortable-tables-react/
+
+5. In /client/src/hooks/useStateRef.js
+    - Directly copied custom hook from a Stack Overflow answer on Oct 17, 2019 by Moses Gitau
+    - Source: https://stackoverflow.com/a/58439475/9440835
+
+SERVER DEPENDENCIES
+-------------------
+1. bcrypt
+   - License: MIT
+   - Source: https://github.com/kelektiv/node.bcrypt.js
+
+2. cors
+   - License: MIT
+   - Source: https://github.com/expressjs/cors
+
+3. express
+   - License: MIT
+   - Source: https://github.com/expressjs/express
+
+4. express-openapi-validator
+   - License: Apache License 2.0
+   - Source: https://github.com/cdimascio/express-openapi-validator
+
+5. http
+   - License: MIT
+   - Source: https://github.com/nodejs/node
+
+6. http-errors
+   - License: MIT
+   - Source: https://github.com/jshttp/http-errors
+
+7. jsonwebtoken
+   - License: MIT
+   - Source: https://github.com/auth0/node-jsonwebtoken
+
+8. jspdf
+   - License: MIT
+   - Source: https://github.com/parallax/jsPDF
+
+9. konva
+   - License: MIT
+   - Source: https://github.com/konvajs/konva
+
+10. npmlog
+    - License: ISC
+    - Source: https://github.com/npm/npmlog
+
+11. os
+    - License: MIT
+    - Source: https://github.com/npm/osenv
+
+12. pg
+    - License: MIT
+    - Source: https://github.com/brianc/node-postgres
+
+13. simplify-js
+    - License: BSD 2-clause
+    - Source: https://github.com/mourner/simplify-js/
+
+14. socket.io
+    - License: MIT
+    - Source: https://github.com/socketio/socket.io
+
+15. socket.io-client
+    - License: MIT
+    - Source: https://github.com/socketio/socket.io-client
+
+In addition, the server software uses code adapted from the following:
+
+1. In server/src/error-handler.js:
+    - A blog post by Simon Plenderleith on December 7, 2020:
+    - Source: https://simonplend.com/how-to-create-an-error-handler-for-your-express-api/
+
+DEV DEPENDENCIES
+----------------
+1. nodemon
+   - License: MIT
+   - Source: https://github.com/remy/nodemon
+
+2. swagger-autogen
+   - License: MIT
+   - Source: https://github.com/davibaltar/swagger-autogen
+
+3. vite
+   - License: MIT
+   - Source: https://github.com/vitejs/vite
+
+4. @vitejs/plugin-react
+   - License: MIT
+   - Source: https://github.com/vitejs/vite-plugin-react
+
+5. eslint
+   - License: MIT
+   - Source: https://github.com/eslint/eslint
+
+6. eslint-plugin-jsx-a11y
+   - License: MIT
+   - Source: https://github.com/jsx-eslint/eslint-plugin-jsx-a11y
+
+7. eslint-plugin-react
+   - License: MIT
+   - Source: https://github.com/jsx-eslint/eslint-plugin-react
+
+8. eslint-plugin-react-hooks
+   - License: MIT
+   - Source: https://github.com/facebook/react
+
+9. vite-plugin-svgr
+   - License: MIT
+   - Source: https://github.com/pd4d10/vite-plugin-svgr
+
+For more details, refer to the respective license texts included in this repository or the source URLs provided above.

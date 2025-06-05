@@ -1,0 +1,34 @@
+{
+  "name": "blackboard-server",
+  "version": "1.1.1",
+  "license": "AGPL-3.0-or-later",
+  "description": "Virtual blackboard backend using Node and PostgreSQL",
+  "author": "Seppo Äyräväinen <seppo.ayravainen@aalto.fi>",
+  "main": "server.js",
+  "scripts": {
+    "start": "node /srv/app/server/src/server.js",
+    "dev": "nodemon --inspect=0.0.0.0:9229 /srv/app/server/src/server.js",
+    "swagger-autogen": "node /srv/app/server/src/swagger.js"
+  },
+  "dependencies": {
+    "bcrypt": "5.1.1",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "express-openapi-validator": "^5.4.9",
+    "http": "0.0.1-security",
+    "http-errors": "^2.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "jspdf": "^3.0.1",
+    "konva": "^9.3.20",
+    "npmlog": "^7.0.1",
+    "os": "^0.1.2",
+    "pg": "^8.15.6",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1",
+    "simplify-js": "^1.2.4"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10",
+    "swagger-autogen": "^2.23.7"
+  }
+}

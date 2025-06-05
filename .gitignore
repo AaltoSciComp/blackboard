@@ -1,0 +1,8 @@
+Thumbs.db
+.DS_Store
+server/.git
+server/node_modules
+client/node_modules
+client/.DS_Store
+client/public/js
+.env

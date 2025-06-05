@@ -1,0 +1,19 @@
+.ctxmenu {
+    background-color: white;
+    border: 1px solid black;
+}
+  
+.ctxmenu ul,
+.ctxmenu li {
+    padding: 0;
+    margin: 0;
+}
+  
+.ctxmenu li {
+    padding: 5px 10px 5px 10px;
+    list-style-type: none;
+}
+  
+.ctxmenu li:hover {
+    background-color: gray;
+}
