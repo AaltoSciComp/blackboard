@@ -1048,12 +1048,19 @@
                         });
                         break;
                     case 'Arrow':
-                        // Support both old and new format of arrow data
+                        // Arrow shapedata format: [[0, 0, 0], [0, rel_x_pct, rel_y_pct]]
                         let arrowPoints = [];
-                        if(shape.shapedata.length === 4) arrowPoints = [0,0, pctToPixels(shape.shapedata[2], layerWidth), pctToPixels(shape.shapedata[3],layerHeight)]
-                        if(shape.shapedata.length === 2) arrowPoints = [0,0, pctToPixels(shape.shapedata[1][1], layerWidth), pctToPixels(shape.shapedata[1][2],layerHeight)]
+
+                        if(shape.shapedata.length === 4) {
+                            // Old format: [0, x1, y1, x2, y2] with percentage values
+                            arrowPoints = [0, 0, pctToPixels(shape.shapedata[2], layerWidth), pctToPixels(shape.shapedata[3], layerHeight)]
+                        }
+                        if(shape.shapedata.length === 2) {
+                            // Current format: [[0, 0, 0], [0, rel_x, rel_y]] with percentage values
+                            arrowPoints = [0, 0, pctToPixels(shape.shapedata[1][1], layerWidth), pctToPixels(shape.shapedata[1][2], layerHeight)]
+                        }
                         thisShape = new Konva.Arrow({
-                            name: 'Line',
+                            name: 'Arrow',
                             stroke: shape.stroke,
                             strokeWidth: strokeWidthPx,
                             strokeEnabled: shape.shapedetails.strokeEnabled,
@@ -1533,6 +1540,9 @@
                                     if(typeof(json.shapedetails.bezier) !== 'undefined') modShape.bezier(json.shapedetails.bezier);
                                     if(typeof(json.shapedetails.tension) !== 'undefined') modShape.tension(Number(json.shapedetails.tension));
                                     if(typeof(json.shapedetails.closed) !== 'undefined') modShape.closed(json.shapedetails.closed);
+                                } else if(modShape.attrs.name === 'Arrow') {
+                                    // Arrows are points-based like lines, no width/height to update
+                                    // Points are handled below via shapedata
                                 } else {
                                     if(modShape.attrs.name === 'Ellipse') {
                                         if(typeof(json.shapedetails.radiusX) !== 'undefined') modShape.radiusX(pctToPixels(json.shapedetails.radiusX, layer.main[physid].width()));
@@ -1553,7 +1563,14 @@
                             const layerWidth = layer.main[physid].width();
                             const layerHeight = layer.main[physid].height();
 
-                            modShape.points(json.shapedata.flatMap(x => [x[1] * layerWidth, x[2] * layerHeight]));
+                            if(modShape.attrs.name === 'Arrow') {
+                                // Arrows: shapedata contains relative coordinates [[0, 0, 0], [0, rel_x, rel_y]] as percentages
+                                // Points are relative to arrow position
+                                modShape.points([0, 0, pctToPixels(json.shapedata[1][1], layerWidth), pctToPixels(json.shapedata[1][2], layerHeight)]);
+                            } else {
+                                // Lines: shapedata contains relative points
+                                modShape.points(json.shapedata.flatMap(x => [x[1] * layerWidth, x[2] * layerHeight]));
+                            }
                         }
 
                         layer.main[physid].batchDraw();

@@ -357,6 +357,9 @@ channels:
           summary: Ask all viewers to update shapedetails on one of the boards
           payload:
             type: object
+            required:
+              - id
+              - boardid
             properties:
               id:
                 $ref: '#/components/schemas/shapeid'
@@ -364,6 +367,8 @@ channels:
                 $ref: '#/components/schemas/boardid'
               shapedetails:
                 $ref: '#/components/schemas/shapedetails'
+              shapedata:
+                $ref: '#/components/schemas/shapedata'
             examples:
               - id: 199
                 boardid: 1

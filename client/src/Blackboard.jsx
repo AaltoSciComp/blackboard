@@ -1488,7 +1488,7 @@ function Blackboard(props) {
                     }
 
                     // Create a Konva transformer for manipulating the object that was touched
-                    const transformer = new Konva.Transformer({
+                    const transformerConfig = {
                         rotateEnabled: ui.rotateEnabled ? true : false,
                         anchorDragBoundFunc: function (oldPos, newPos, e) {
 
@@ -1503,16 +1503,16 @@ function Blackboard(props) {
                             if (transformer.getActiveAnchor() === 'rotater') {
                               return newPos;
                             }
-                                    
+
                             const closestX = Math.round(newPos.x / gridBlockSize.x) * gridBlockSize.x;
                             const diffX = Math.abs(newPos.x - closestX);
-                  
+
                             const closestY = Math.round(newPos.y / gridBlockSize.y) * gridBlockSize.y;
                             const diffY = Math.abs(newPos.y - closestY);
                   
                             const snappedX = diffX < 10;
                             const snappedY = diffY < 10;
-                  
+
                             // a bit different snap strategies based on snap direction
                             // we need to reuse old position for better UX
                             if (snappedX && !snappedY) {
@@ -1533,16 +1533,46 @@ function Blackboard(props) {
                             }
                             return newPos;
                         }
-                    });
+                    };
+
+                    const transformer = new Konva.Transformer(transformerConfig);
                     mainLayer.current.add(transformer);
                     transformer.nodes([e.target]);
+                    
+                    // Remove any existing event handlers to prevent multiple firing
+                    e.target.off('transform');
+                    e.target.off('transformend');
+                    e.target.off('dragend');
+                    
+                    // Flag to track if transformend has handled the update (to avoid duplicate calls from dragend)
+                    let transformHandled = false;
+                    
                     /*e.target.on('transformstart', function () {
                         mainLayer.current.BatchDraw();
                         log(DEBUG_LEVELS.DEV, 'Transform starting');
                     })*/
                     e.target.on('transform', () => {
                         //console.info(e.target.getTransform().m);
-                        if(e.target.attrs?.name !== 'Line' && e.target.attrs?.name !== 'Polyline') {
+                        const shapeName = e.target.attrs?.name;
+
+                        // For arrows, recalculate points based on scale (like polylines)
+                        if(shapeName === 'Arrow') {
+                            const scaleX = e.target.scaleX();
+                            const scaleY = e.target.scaleY();
+                            const points = e.target.points();
+
+                            // Scale the points and reset scale to 1
+                            const newPoints = points.map((point, index) => {
+                                return index % 2 === 0 ? point * scaleX : point * scaleY;
+                            });
+
+                            e.target.setAttrs({
+                                points: newPoints,
+                                scaleX: 1,
+                                scaleY: 1,
+                            });
+                        } else if(shapeName !== 'Line' && shapeName !== 'Polyline') {
+                            // For other shapes (Rect, Ellipse, etc), bake scale into width/height
                             e.target.setAttrs({
                                 width: e.target.width() * e.target.scaleX(),
                                 height: e.target.height() * e.target.scaleY(),
@@ -1553,17 +1583,20 @@ function Blackboard(props) {
                     });
                     e.target.on('transformend', function () {
                         log(DEBUG_LEVELS.DEV, 'TransformEnd called. ScaleX: ' + e.target.scaleX() + ' ScaleY: ' + e.target.scaleY() + ' Rotation: ' + e.target.rotation());
+                        transformHandled = true;
                         handleShapeTransform(e.target);
                         e.target.draggable(false);
                         transformer.nodes([]);
                     })
                     e.target.on('dragend', function () {
                         //console.info(e.target.parent.constructor.name, e.target.attrs?.name);
-                        // Do not proceed if we clicked on a transformer handle instead of a shape on layer
-                        if(e.target.parent.constructor.name !== 'Transformer') {
+                        // Only handle if transformend hasn't already handled it and we're not on a transformer handle
+                        if(!transformHandled && e.target.parent.constructor.name !== 'Transformer') {
                             handleShapeTransform(e.target);
                             busyDragging = false;
                         }
+                        // Reset flag for next interaction
+                        transformHandled = false;
                         log(DEBUG_LEVELS.DEV, 'Dropped at: ' + e.target.attrs.x + ', ' + e.target.attrs.y);
                     })
                 } else {
@@ -1874,14 +1907,30 @@ function Blackboard(props) {
             const stage = stageEl.current.getStage();
             let reqBody = {
                 boardid: currentBoard,
-                x: toRelativeCoords(shape.attrs.x, stage.width()).toString(),
-                y: toRelativeCoords(shape.attrs.y, stage.height()).toString(),
                 shapedetails: {
                     rotation: shape.attrs.rotation ?? 0,
                     scaleX: shape.attrs.scaleX ?? 1,
                     scaleY: shape.attrs.scaleY ?? 1,
                 }
             }
+
+            // For arrows, save the updated points and position
+            if(shape.attrs.name === 'Arrow' && shape.attrs.points) {
+                const points = shape.attrs.points;
+                // Store arrow points in the same format as initial creation: [[0,0,0], [0, relative_x, relative_y]]
+                reqBody.shapedata = [
+                    [0, 0, 0],
+                    [0, pixelsToPct(points[2], stage.width()), pixelsToPct(points[3], stage.height())]
+                ];
+                // Arrow position is stored separately
+                reqBody.x = toRelativeCoords(shape.attrs.x, stage.width()).toString();
+                reqBody.y = toRelativeCoords(shape.attrs.y, stage.height()).toString();
+            } else {
+                // For other shapes, send x, y normally
+                reqBody.x = toRelativeCoords(shape.attrs.x, stage.width()).toString();
+                reqBody.y = toRelativeCoords(shape.attrs.y, stage.height()).toString();
+            }
+
             if(shape.attrs.radiusX) reqBody.shapedetails['radiusX'] = pixelsToPct(shape.attrs.radiusX, stage.width());
             if(shape.attrs.radiusY) reqBody.shapedetails['radiusY'] = pixelsToPct(shape.attrs.radiusY, stage.height());
             if(shape.attrs.width) reqBody.shapedetails['width'] = pixelsToPct(shape.attrs.width, stage.width());
@@ -3239,10 +3288,16 @@ function Blackboard(props) {
                             break;
                         case 'Arrow':
                             if(shape.shapedata) {
-                                // Support both old and new format of arrow data
+                                // Arrow shapedata format: [[0, 0, 0], [0, rel_x_pct, rel_y_pct]]
                                 let arrowPoints = [];
-                                if(shape.shapedata.length === 4) arrowPoints = [0, 0, pctToPixels(shape.shapedata[2], layerWidth), pctToPixels(shape.shapedata[3], layerHeight)]
-                                if(shape.shapedata.length === 2) arrowPoints = [0, 0, pctToPixels(shape.shapedata[1][1], layerWidth), pctToPixels(shape.shapedata[1][2], layerHeight)]
+                                if(shape.shapedata.length === 4) {
+                                    // Old format: [0, x1, y1, x2, y2] with percentage values
+                                    arrowPoints = [0, 0, pctToPixels(shape.shapedata[2], layerWidth), pctToPixels(shape.shapedata[3], layerHeight)]
+                                }
+                                if(shape.shapedata.length === 2) {
+                                    // Current format: [[0, 0, 0], [0, rel_x, rel_y]] with percentage values
+                                    arrowPoints = [0, 0, pctToPixels(shape.shapedata[1][1], layerWidth), pctToPixels(shape.shapedata[1][2], layerHeight)]
+                                }
                                 thisShape = new Konva.Arrow({
                                     name: (shape.shapetype),
                                     stroke: shape.stroke,

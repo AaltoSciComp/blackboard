@@ -1235,7 +1235,8 @@ app.patch('/shape/:sessionid/:id', async (req, res, next) => {
                                 const jsonQuery = query = jsonQueryKeys.join(', ');
                                 const { rows } = await pool.query("update shapes set " + jsonQuery + 
                                     " WHERE sessionid = " + sid + " AND id = " + id + 
-                                    " RETURNING id, boardid, shapedetails");
+                                    " RETURNING id, boardid" + (req.body.shapedetails ? ", shapedetails" : "") +
+                                    (req.body.shapedata ? ", shapedata" : ""));
                                 bid = parseInt(rows[0].boardid);               
                                 if(bid > 0) {
                                     jres1 = rows[0];
