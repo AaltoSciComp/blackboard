@@ -1253,6 +1253,19 @@ function Blackboard(props) {
         stageEl.current.getStage().off("pointerenter pointerleave mouseover mouseout", false);
         stageEl.current.removeEventListener('pointerdown pointerup pointermove');
         mainLayer.current.find('Transformer').forEach(node => node.destroy());
+
+        // Remove shape-level event handlers and make all shapes non-draggable
+        // This is especially important when snap-to-grid setting changes
+        mainLayer.current.children.forEach(shape => {
+            if (shape.className !== 'Transformer') {
+                shape.draggable(false);
+                shape.off('pointerdown');
+                shape.off('dragmove');
+                shape.off('transform');
+                shape.off('transformend');
+                shape.off('dragend');
+            }
+        });
     }
 
     /**
