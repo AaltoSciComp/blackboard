@@ -546,11 +546,17 @@ function Blackboard(props) {
     const handleShowSidebar = () => setShowSidebar(true);
 
     const handleToolChange = useCallback((newTool) => {
-        // If switching from polyline, switch to bezier lines by default
+        // If switching to Line tool, restore saved bezier preference (or default to true)
         if(newTool.name === 'Line') {
-            setLineProperties({...lineProperties, bezier: true});
+            const savedBezier = localStorage.getItem('lineSmoothing');
+            if (savedBezier !== null) {
+                setLineProperties({...lineProperties, bezier: savedBezier === 'true'});
+            } else {
+                // Default to true if no saved preference exists
+                setLineProperties({...lineProperties, bezier: true});
+            }
         }
-        // If switching to polyline, switch beziers off by default
+        // If switching to polyline, switch beziers off (polylines don't support bezier)
         if(newTool.name === 'Polyline') {
             setLineProperties({...lineProperties, bezier: false});
         }
@@ -1068,8 +1074,11 @@ function Blackboard(props) {
                     setSessionInfo(newSessionInfo);
                     // Merge given user settings with defaults
                     setUiOptions({...DEF_UI.ui, ...json.settings.ui});
-                    setLineProperties({...DEF_UI.line, ...json.settings.line});
+                    const mergedLineSettings = {...DEF_UI.line, ...json.settings.line};
+                    setLineProperties(mergedLineSettings);
                     setLaserProperties({...DEF_UI.laser, ...json.settings.laser});
+                    // Initialize localStorage with bezier setting from backend (after localStorage.clear())
+                    localStorage.setItem('lineSmoothing', mergedLineSettings.bezier.toString());
                     sessionStorage.setItem('presentertoken_' + sid, json.token);
                     socket.emit('claim_board', { sid: sid, token: json.token });
                     return resp.status;
@@ -3626,7 +3635,11 @@ function Blackboard(props) {
                             wideUI = {wideUI}
                         /> }
                     </ButtonGroup>}
-                    { ui.complex && <Button size={wideUI ? "" : "sm"} title="Turn line smooothing on/off" className="me-2" variant={lineProperties.bezier ? 'primary' : 'secondary'} onClick={(e) => setLineProperties({...lineProperties, bezier: lineProperties.bezier ? false : true})}><Icon.Bezier2 /></Button>}
+                    { ui.complex && <Button size={wideUI ? "" : "sm"} title="Turn line smooothing on/off" className="me-2" variant={lineProperties.bezier ? 'primary' : 'secondary'} onClick={(e) => {
+                        const newBezier = !lineProperties.bezier;
+                        setLineProperties({...lineProperties, bezier: newBezier});
+                        localStorage.setItem('lineSmoothing', newBezier.toString());
+                    }}><Icon.Bezier2 /></Button>}
                     <ButtonGroup className="me-2" size={wideUI ? "" : "sm"}>
                         <Button size={wideUI ? "" : "sm"} title="Remove last added shape" variant="primary" onClick={clearLast}><Icon.ArrowCounterclockwise /> {wideUI ? "Undo" : ""}</Button>
                         <Button size={wideUI ? "" : "sm"} title="Restore last added shape" variant="primary" onClick={restoreLast}><Icon.ArrowClockwise /> {wideUI ? "Redo" : ""}</Button>
