@@ -2909,24 +2909,66 @@ function Blackboard(props) {
                 resetPolyline();
                 return;
             }
-            
+
             // Hold the pixel coordinates of active pointer within our canvas
             let newX, newY;
             let relX, relY;
 
             // If we are snapped to a previous Polyline point, replace the final coordinates with those from the Circle
+            // For pen/stylus input that may not trigger hover events, also check if click is within any snappable circle
             if(len > 2 && (openPolyLine.snapped && openPolyLine.snapped.className === 'Circle')) {
                 newX = openPolyLine.snapped.x();
                 newY = openPolyLine.snapped.y();
-                log(DEBUG_LEVELS.DEV, 'penUp snapped final coords');
+                log(DEBUG_LEVELS.DEV, 'penUp snapped final coords (from hover)');
                 openPolyLine.finished = true;
+            } else if(len > 2 && e.pointerType === 'pen') {
+                // Check if pen click is within any snappable circle (hover events may not fire with pen)
+                const clickX = e.clientX;
+                const clickY = e.clientY - toolbarSize.height;
+                const circles = drawLayer.current.find('Circle').filter(c => c.getAttr('canSnap') === true);
+
+                // Find the closest circle within snap range (1.5x radius to match hover enlargement)
+                let closestCircle = null;
+                let minDist = Infinity;
+                const snapRadius = stageSize.width * 0.007 * 1.5; // Match the enlarged circle radius
+
+                for(const circle of circles) {
+                    const circleX = circle.x();
+                    const circleY = circle.y();
+                    const dist = Math.sqrt(Math.pow(clickX - circleX, 2) + Math.pow(clickY - circleY, 2));
+
+                    if(dist < snapRadius && dist < minDist) {
+                        minDist = dist;
+                        closestCircle = circle;
+                    }
+                }
+
+                if(closestCircle) {
+                    newX = closestCircle.x();
+                    newY = closestCircle.y();
+                    openPolyLine.snapped = closestCircle;
+                    openPolyLine.finished = true;
+                    log(DEBUG_LEVELS.DEV, 'penUp snapped final coords (pen proximity check)');
+                } else {
+                    newX = lastX;
+                    newY = lastY;
+                }
             } else {
                 // Else we create an intermediate point, and we should already have snapped the
                 // coordinates to the grid if needed
                 newX = lastX;
                 newY = lastY;
             }
-            
+
+            // If we snapped to a circle, update the polyline's last point to use the snapped coordinates
+            if(openPolyLine.finished && (newX !== lastX || newY !== lastY)) {
+                // Update the last point in the polyline to the snapped position
+                let updatedPoints = newPoints.slice(0, -2).concat([newX - drawnShape.x(), newY - drawnShape.y()]);
+                drawnShape.points(updatedPoints);
+                lastX = newX - drawnShape.x();
+                lastY = newY - drawnShape.y();
+            }
+
             //Calculate the screen-normalized distance from previous Polyline point
             const prevIdx = drawingData.length - 1;
             let dist = 0;
