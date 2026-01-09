@@ -11,24 +11,24 @@
     "swagger-autogen": "node /srv/app/server/src/swagger.js"
   },
   "dependencies": {
-    "bcrypt": "5.1.1",
+    "bcrypt": "6.0.0",
     "cors": "^2.8.5",
-    "express": "^5.1.0",
-    "express-openapi-validator": "^5.4.9",
+    "express": "^5.2.1",
+    "express-openapi-validator": "^5.6.0",
     "http": "0.0.1-security",
-    "http-errors": "^2.0.0",
-    "jsonwebtoken": "^9.0.2",
+    "http-errors": "^2.0.1",
+    "jsonwebtoken": "^9.0.3",
     "jspdf": "^4.0.0",
-    "konva": "^9.3.20",
+    "konva": "^10.0.12",
     "npmlog": "^7.0.1",
     "os": "^0.1.2",
-    "pg": "^8.15.6",
-    "socket.io": "^4.8.1",
-    "socket.io-client": "^4.8.1",
+    "pg": "^8.16.3",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3",
     "simplify-js": "^1.2.4"
   },
   "devDependencies": {
-    "nodemon": "^3.1.10",
+    "nodemon": "^3.1.11",
     "swagger-autogen": "^2.23.7"
   }
 }
