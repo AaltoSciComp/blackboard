@@ -1647,13 +1647,12 @@ function Blackboard(props) {
         if(tool === 'Pointer') {
             socket.emit('laser_off', {sid: props.sid, token: getPresenterToken(props.sid)});
         }
-        stageEl.current.on('pointerenter', function (e) {
+        stageEl.current.on('pointerdown pointermove', function (e) {
             // If swipe is going on, don't do anything (NOTE: using swipeRef to get the latest value)
             if(!swipeRef.current) {
                 if (e.target !== e.target.getStage()) {
-                    e.target.off('pointerenter'); // prevent multiple firing
-                    // skip mouseover without a button down (TODO: how to limit to left button as button is -1 when dragging)
-                    if(e.evt.pointerType === 'mouse' && !e.evt.buttons) return;
+                    // For mouse/trackpad, only act while button is pressed or on initial pointerdown.
+                    if(e.evt.pointerType === 'mouse' && e.type !== 'pointerdown' && !e.evt.buttons) return;
                     e.target.setAttr("draggable", false); // in case shape is previously set as draggable
                     addShapeToDeleteQueue(e.target);
                 }
@@ -1674,13 +1673,12 @@ function Blackboard(props) {
             socket.emit('laser_off', {sid: props.sid, token: getPresenterToken(props.sid)});
         }
 
-        stageEl.current.on('pointerenter', function (e) {
+        stageEl.current.on('pointerdown pointermove', function (e) {
             // If swipe is going on, don't do anything (NOTE: using swipeRef to get the latest value)
             if(!swipeRef.current) {
                 if (e.target !== e.target.getStage()) {
-                    e.target.off('pointerenter'); // prevent multiple firing
-                    // skip mouseover without a button down (TODO: how to limit to left button as button is -1 when dragging)
-                    if(e.evt.pointerType === 'mouse' && !e.evt.buttons) return;
+                    // For mouse/trackpad, only act while button is pressed or on initial pointerdown.
+                    if(e.evt.pointerType === 'mouse' && e.type !== 'pointerdown' && !e.evt.buttons) return;
                     e.target.setAttr("draggable", false); // in case shape is previously set as draggable
                     //if(e.target.attrs.name === 'Wipe') return; // Don't recolor wipes
                     //handleShapeDelete(e.target);
