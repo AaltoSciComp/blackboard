@@ -87,7 +87,7 @@ export const DEF_UI = {
     line: {
         width: 0.15,
         bezier: true,
-        pointsThresholdMs: 16,
+        pointsThresholdMs: 28,
         distThreshold: 0.002,
         lineTension: 0.3,
         showPoints: false,

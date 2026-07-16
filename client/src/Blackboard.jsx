@@ -863,9 +863,8 @@ function Blackboard(props) {
         if ((stageSize.width / (window.devicePixelRatio ?? 1)) > HIDE_TEXTS_THRESHOLD) setWideUI(true); else setWideUI(false);
 
         reAttachToolEventHandlers(previousTool, currentTool);
-        // Optimization, may break at some point: We don't need to check currentBoard for changes,
-        // as we only need to recreate event listeners when boardSettings have changed
-    }, [stroke, fill, boardSettings, stageSize, lineProperties, ui, currentTool, laserProperties, boardLimits]); // Only re-run the effect if these change
+        // When board changes, we need to re-register event listeners to ensure clean state
+    }, [stroke, fill, boardSettings, stageSize, lineProperties, ui, currentTool, laserProperties, boardLimits, currentBoard]); // Only re-run the effect if these change
 
     // For better performance, calculate grid block size in pixels only when needed
     // (when dimensions or grid settings change)
@@ -893,6 +892,9 @@ function Blackboard(props) {
         async function cb() {
             // Delete anything that might be left in draw layer
             drawLayer.current?.destroyChildren?.();
+            // Clear the konvaShape ref to prevent stale pointerId issues
+            konvaShape.current = null;
+            drawingPointer = null;
             if (abortControllerRef.current) {
               abortControllerRef.current.abort();
             }
@@ -1275,6 +1277,10 @@ function Blackboard(props) {
                 shape.off('dragend');
             }
         });
+
+        // Clear current drawing shape and pointer to prevent stale pointerId issues
+        konvaShape.current = null;
+        drawingPointer = null;
     }
 
     /**
@@ -2461,15 +2467,25 @@ function Blackboard(props) {
         log(DEBUG_LEVELS.DEV, 'Pen down with '+ e.pointerType);
         if(mode !== 'Polyline') {
             if(konvaShape.current) {
-                const pointerWeStartedShapeWith = konvaShape.current.getAttr('pointerId');
-                if(pointerWeStartedShapeWith !== e.pointerId) {
-                    log(DEBUG_LEVELS.DEBUG, 'shape has pointerId' + pointerWeStartedShapeWith + ', this is' + e.pointerId + 'primary:' + e.isPrimary);
-                    return;
+                // Check if the shape is on the draw layer (actively being drawn)
+                // If it's not on drawLayer, it's a stale reference and should be cleared
+                const isOnDrawLayer = konvaShape.current.getLayer() === drawLayer.current;
+                if(!isOnDrawLayer) {
+                    log(DEBUG_LEVELS.DEBUG, 'Clearing stale shape reference not on draw layer');
+                    konvaShape.current = null;
+                    drawingPointer = null;
+                } else {
+                    // Shape is being actively drawn - check if it's from a different pointer
+                    const pointerWeStartedShapeWith = konvaShape.current.getAttr('pointerId');
+                    if(pointerWeStartedShapeWith !== e.pointerId) {
+                        log(DEBUG_LEVELS.DEBUG, 'shape has pointerId ' + pointerWeStartedShapeWith + ', this is ' + e.pointerId + ' - different pointer, ignoring');
+                        return;
+                    }
                 }
             }
-            if(drawingPointer) {
-                log(DEBUG_LEVELS.DEBUG, 'Note: Already drawing with pointer id' + drawingPointer);
-                return; // return if already drawing
+            if(drawingPointer && drawingPointer !== e.pointerId) {
+                log(DEBUG_LEVELS.DEBUG, 'Note: Already drawing with pointer id ' + drawingPointer + ', this is ' + e.pointerId);
+                return; // return if already drawing with a different pointer
             }
         }
 
@@ -2479,6 +2495,9 @@ function Blackboard(props) {
         // A quick menu for single finger touch when in pen mode
         if(!ui.mouse && e.pointerType === 'touch') {
             if(!ui.complex) return;
+            // Clear any existing drawing state to prevent stale pointerId issues
+            konvaShape.current = null;
+            drawingPointer = null;
             setFingerMenu({
                 position: { x: e.clientX, y: e.clientY },
                 target: e.target,
@@ -2508,6 +2527,8 @@ function Blackboard(props) {
             //stageEl.current.setPointerCapture(e.pointerId);
             drawingPointer = e.pointerId;
         } else {
+            // For polylines, set the drawing pointer so penMove can track the line
+            drawingPointer = e.pointerId;
             // Don't initialize drawingData if we are in the process of making a polyline
             if(!openPolyLine.shape) {
                 log(DEBUG_LEVELS.DEV, 'Initializing drawingData');
@@ -2531,8 +2552,27 @@ function Blackboard(props) {
         switch(mode) {
             case 'Polyline':
                 // If we have a polyline open, we don't want to create a new Konva shape
+                // Just log and continue - penUp will handle adding the point
                 if(openPolyLine.shape) {
-                    return;
+                    log(DEBUG_LEVELS.DEV, 'Polyline already open, setting up for intermediate point');
+                    // Ensure konvaShape.current points to the open polyline
+                    konvaShape.current = openPolyLine.shape;
+                    // Keep rendered points in sync with committed DB points.
+                    // A previous interaction may have left a transient preview point.
+                    const committedLen = drawingData.length * 2;
+                    let existingPoints = konvaShape.current.points();
+                    if(existingPoints.length > committedLen) {
+                        konvaShape.current.points(existingPoints.slice(0, committedLen));
+                        existingPoints = konvaShape.current.points();
+                    }
+                    // Start exactly one preview point for this interaction.
+                    // penMove will update this endpoint while dragging; on click-only it remains as-is.
+                    konvaShape.current.points(existingPoints.concat([
+                        points[0] - konvaShape.current.x(),
+                        points[1] - konvaShape.current.y()
+                    ]));
+                    // Don't return - let the function continue so event listeners are properly set
+                    break;
                 }
                 // Continue to line part if polyline is not open (we are just starting the line)
             case 'Line':
@@ -2646,11 +2686,14 @@ function Blackboard(props) {
         }
         // If drawing, use another layer. TODO: Check if it can be done with wipe
         //drawLayer.add(konvaShape.current);
-        drawLayer.current.add(konvaShape.current); // Definitely need to draw on separate layer if there's a lot of stuff !!!
-        const shapeStartTime = Date.now();
-        konvaShape.current.setAttr("startTime", shapeStartTime);
-        konvaShape.current.setAttr("boardId", currentBoard);
-        konvaShape.current.setAttr("pointerId",e.pointerId);
+        // Only add shape to layer if we just created it (not for polyline intermediate points)
+        if(konvaShape.current && !openPolyLine.shape) {
+            drawLayer.current.add(konvaShape.current); // Definitely need to draw on separate layer if there's a lot of stuff !!!
+            const shapeStartTime = Date.now();
+            konvaShape.current.setAttr("startTime", shapeStartTime);
+            konvaShape.current.setAttr("boardId", currentBoard);
+            konvaShape.current.setAttr("pointerId",e.pointerId);
+        }
         if(mode === 'Line') {
             if(lineProperties.showPoints) emphasizePoint(konvaShape.current.x(), konvaShape.current.y());
             drawingData.push([0, 0, 0]);
@@ -2659,7 +2702,8 @@ function Blackboard(props) {
         // (unless in polyline mode, in which case we don't care)
         if(mode !== 'Polyline') {
             document.addEventListener("pointerleave", (event) => triggerPenUp({ mode, event }), { once: true, capture: true });
-        } else {
+        } else if(!openPolyLine.shape) {
+            // Only set up polyline on initial creation, not for intermediate points
             //konvaShape.current.listening(false);
             openPolyLine.shape = konvaShape.current;
             //openPolyLine.snapped = [points[0],points[1],Date.now()];
@@ -2685,9 +2729,18 @@ function Blackboard(props) {
         // We can only draw a shape using the same pointer that started it, unless
         // it is a Polyline
         if(konvaShape.current && !openPolyLine.shape) {
+            // Check if the shape is still on the draw layer (actively being drawn)
+            const isOnDrawLayer = konvaShape.current.getLayer() === drawLayer.current;
+            if(!isOnDrawLayer) {
+                log(DEBUG_LEVELS.DEBUG, 'penMove: Clearing stale shape reference not on draw layer');
+                konvaShape.current = null;
+                drawingPointer = null;
+                return;
+            }
+
             const pointerWeStartedShapeWith = konvaShape.current.getAttr('pointerId');
             if(pointerWeStartedShapeWith !== e.pointerId) {
-                log(DEBUG_LEVELS.DEBUG, 'Wrong pointerId; should be' + pointerWeStartedShapeWith + 'this is' + e.pointerId + 'at' + e.clientX + ',' + e.clientY);
+                log(DEBUG_LEVELS.DEBUG, 'Wrong pointerId; should be ' + pointerWeStartedShapeWith + ' this is ' + e.pointerId + ' at ' + e.clientX + ',' + e.clientY);
                 return;
             }
         } else if(!konvaShape.current) return; // prevent accessing null shape object
@@ -2870,6 +2923,7 @@ function Blackboard(props) {
         let drawnShape = konvaShape.current;
 
         if(mode === 'Polyline') {
+            log(DEBUG_LEVELS.DEV, 'penUp: Polyline mode, processing point');
             /**
              * Polylines have two data series:
              * 1. drawnShape.points() is what is actually drawn on presenter's screen (but no timestamps)
@@ -2899,16 +2953,20 @@ function Blackboard(props) {
             let newPoints = drawnShape.points();
             let len = newPoints.length;
 
+            log(DEBUG_LEVELS.DEV, 'penUp: points array length=' + len + ', points=' + JSON.stringify(newPoints), true);
+
             // Store coordinates of the last point in the polyline after the final penMove applied
             let lastX = newPoints[len - 2];
             let lastY = newPoints[len - 1];
 
             // Sanity check that we have added the 0,0 as first coordinates
             if(newPoints[0] !== 0 || newPoints[1] !== 0) {
-                log(DEBUG_LEVELS.ERROR, 'Invalid polyline!');
+                log(DEBUG_LEVELS.ERROR, 'Invalid polyline! First point is ' + newPoints[0] + ',' + newPoints[1], true);
                 resetPolyline();
                 return;
             }
+
+            log(DEBUG_LEVELS.DEV, 'penUp: passed (0,0) check, len=' + len + ', pointerType=' + e.pointerType, true);
 
             // Hold the pixel coordinates of active pointer within our canvas
             let newX, newY;
@@ -2917,47 +2975,73 @@ function Blackboard(props) {
             // If we are snapped to a previous Polyline point, replace the final coordinates with those from the Circle
             // For pen/stylus input that may not trigger hover events, also check if click is within any snappable circle
             if(len > 2 && (openPolyLine.snapped && openPolyLine.snapped.className === 'Circle')) {
+                log(DEBUG_LEVELS.DEV, 'penUp: entering branch 1 (snapped from hover)', true);
                 newX = openPolyLine.snapped.x();
                 newY = openPolyLine.snapped.y();
-                log(DEBUG_LEVELS.DEV, 'penUp snapped final coords (from hover)');
+                log(DEBUG_LEVELS.DEV, 'penUp snapped final coords (from hover/pointerdown)');
                 openPolyLine.finished = true;
-            } else if(len > 2 && e.pointerType === 'pen') {
-                // Check if pen click is within any snappable circle (hover events may not fire with pen)
+            } else if(len > 2 && !openPolyLine.snapped && e.pointerType === 'pen') {
+                log(DEBUG_LEVELS.DEV, 'penUp: entering branch 2 (pen proximity check)', true);
+                // Pen-specific proximity check (hover events don't work reliably with pens)
+                // Check proximity to ANY circle to close the polyline (like mouse hover does)
                 const clickX = e.clientX;
                 const clickY = e.clientY - toolbarSize.height;
-                const circles = drawLayer.current.find('Circle').filter(c => c.getAttr('canSnap') === true);
 
-                // Find the closest circle within snap range (1.5x radius to match hover enlargement)
-                let closestCircle = null;
-                let minDist = Infinity;
-                const snapRadius = stageSize.width * 0.007 * 1.5; // Match the enlarged circle radius
-
-                for(const circle of circles) {
-                    const circleX = circle.x();
-                    const circleY = circle.y();
-                    const dist = Math.sqrt(Math.pow(clickX - circleX, 2) + Math.pow(clickY - circleY, 2));
-
-                    if(dist < snapRadius && dist < minDist) {
-                        minDist = dist;
-                        closestCircle = circle;
-                    }
+                log(DEBUG_LEVELS.DEV, 'penUp: clickX=' + clickX + ', clickY=' + clickY, true);
+                
+                // Find all snappable circles
+                try {
+                    var circles = drawLayer.current.find('Circle').filter(c => c.getAttr('canSnap') === true);
+                    log(DEBUG_LEVELS.DEV, 'penUp: found ' + circles.length + ' snappable circles', true);
+                } catch(err) {
+                    log(DEBUG_LEVELS.ERROR, 'penUp: error finding circles: ' + err.message, true);
+                    newX = lastX + drawnShape.x();
+                    newY = lastY + drawnShape.y();
                 }
 
-                if(closestCircle) {
-                    newX = closestCircle.x();
-                    newY = closestCircle.y();
-                    openPolyLine.snapped = closestCircle;
-                    openPolyLine.finished = true;
-                    log(DEBUG_LEVELS.DEV, 'penUp snapped final coords (pen proximity check)');
+                if(circles && circles.length > 0) {
+                    // Find the closest circle within snap range
+                    let closestCircle = null;
+                    let minDist = Infinity;
+                    const snapRadius = stageSize.width * 0.007 * 1.2; // Slightly larger than base for easier snapping
+
+                    for(const circle of circles) {
+                        const circleX = circle.x();
+                        const circleY = circle.y();
+                        const dist = Math.sqrt(Math.pow(clickX - circleX, 2) + Math.pow(clickY - circleY, 2));
+
+                        if(dist < snapRadius && dist < minDist) {
+                            minDist = dist;
+                            closestCircle = circle;
+                        }
+                    }
+
+                    log(DEBUG_LEVELS.DEV, 'penUp: finished circle loop, closestCircle=' + (closestCircle ? 'found' : 'null'), true);
+
+                    if(closestCircle) {
+                        newX = closestCircle.x();
+                        newY = closestCircle.y();
+                        openPolyLine.snapped = closestCircle;
+                        openPolyLine.finished = true;
+                        log(DEBUG_LEVELS.DEV, 'penUp snapped final coords (pen proximity check)', true);
+                    } else {
+                        // Not close to any circle - create intermediate point
+                        log(DEBUG_LEVELS.DEV, 'penUp: branch 2 - not close to circle, creating intermediate', true);
+                        newX = lastX + drawnShape.x();
+                        newY = lastY + drawnShape.y();
+                    }
                 } else {
-                    newX = lastX;
-                    newY = lastY;
+                    // No circles found or error occurred
+                    log(DEBUG_LEVELS.DEV, 'penUp: no circles to snap to, creating intermediate', true);
+                    newX = lastX + drawnShape.x();
+                    newY = lastY + drawnShape.y();
                 }
             } else {
+                log(DEBUG_LEVELS.DEV, 'penUp: entering branch 3 (else - normal intermediate point)', true);
                 // Else we create an intermediate point, and we should already have snapped the
                 // coordinates to the grid if needed
-                newX = lastX;
-                newY = lastY;
+                newX = lastX + drawnShape.x();
+                newY = lastY + drawnShape.y();
             }
 
             // If we snapped to a circle, update the polyline's last point to use the snapped coordinates
@@ -2976,12 +3060,16 @@ function Blackboard(props) {
             relX = toRelativeCoords(lastX, stageSize.width); 
             relY = toRelativeCoords(lastY, stageSize.height);
 
+            log(DEBUG_LEVELS.DEV, 'penUp: lastX=' + lastX + ', lastY=' + lastY + ', relX=' + relX + ', relY=' + relY + ', prevIdx=' + prevIdx + ', drawingData.length=' + drawingData.length, true);
+
             // Calculate distance to previous point, or starting point in case we only have one point
             if(prevIdx > 0) {
                 dist = pointsDistance(drawingData[prevIdx][1], drawingData[prevIdx][2], relX, relY);
             } else {
                 dist = pointsDistance(0, 0, relX, relY);
             }
+
+            log(DEBUG_LEVELS.DEV, 'penUp: dist=' + dist + ', distanceThreshold=' + distanceThreshold + ', openPolyLine.finished=' + openPolyLine.finished, true);
 
             // If distance from previous point is not enough, and line is not finished, undo the last point
             if(dist < distanceThreshold && !openPolyLine.finished) {
@@ -2991,7 +3079,7 @@ function Blackboard(props) {
                 }
                 return;
             }
-            
+
             if (dist >= distanceThreshold && !openPolyLine.finished) {
                 // The point coordinates are relative to the starting point of the Polyline
                 // so we need to add the starting point coordinates to the relative ones
@@ -3021,14 +3109,17 @@ function Blackboard(props) {
 
             // If we already have dbId, it means we have saved the shape to db
             // and can just update points. Otherwise, we need to wait for dbId
-            if(openPolyLine.shape?.attrs?.dbId) {
+            const hasDbId = openPolyLine.shape?.attrs?.dbId;
+            log(DEBUG_LEVELS.DEV, 'penUp: hasDbId=' + hasDbId + ', openPolyLine.finished=' + openPolyLine.finished, true);
+
+            if(hasDbId) {
                 //console.info('calling handleShapeUpdate');
                 handleShapeUpdate(drawnShape, {shapedata: drawingData})
                 .then(() => {
-                    // If we are snapped to a previous point, we want to finish drawing
-                    // this Polyline and move it to permanent layer, create outline clones, etc.
-                    if(openPolyLine.snapped !== null/* && timeDiff > 100*/) {
-                        //console.info('timeDiff:',timeDiff);
+                    log(DEBUG_LEVELS.DEV, 'handleShapeUpdate success, openPolyLine.finished=' + openPolyLine.finished, true);
+
+                    // If the polyline is finished, move it to permanent layer and cleanup
+                    if(openPolyLine.finished) {
                         drawnShape.moveTo(mainLayer.current);
                         if(drawnShape.fillEnabled() && shouldCreateOutlineClones) {
                             const outlineClone = createOutlineClone(drawnShape);
@@ -3037,15 +3128,13 @@ function Blackboard(props) {
                                 mainLayer.current.add(outlineClone);
                             }
                         }
-                        log(DEBUG_LEVELS.DEV, 'Was snapped; destroying children!');
+                        log(DEBUG_LEVELS.DEV, 'Polyline finished with dbId; destroying children!', true);
                         resetPolyline();
                     } else {
-                        // TODO: Do we need to consider timeDiff at all?
-                        //console.error('timeDiff only:',timeDiff);
+                        // Just an intermediate point, reset snapped for next point
+                        openPolyLine.snapped = null;
+                        setBusyPainting(false);
                     }
-                    
-                    setBusyPainting(false);
-                    //if(lineProperties.showPoints) drawLayer.current.find().forEach((c) => c.destroy());
                 }, reason => {
                     log(DEBUG_LEVELS.DEBUG, 'Error on penUp (already have a shape): ' + reason, true);
                     resetPolyline();
@@ -3059,8 +3148,25 @@ function Blackboard(props) {
                     // We have no dbId, so let's do the initial save to db.
                     saveShape(drawnShape, dataToSave)
                     .then(() => {
-                        openPolyLine.snapped = null;
-                        log(DEBUG_LEVELS.DEV, 'Saved initial Polyline');
+                        log(DEBUG_LEVELS.DEV, 'Saved initial Polyline, finished=' + openPolyLine.finished, true);
+
+                        // If this was the finishing point (snapped to a circle), complete the polyline
+                        if(openPolyLine.finished) {
+                            drawnShape.moveTo(mainLayer.current);
+                            if(drawnShape.fillEnabled() && shouldCreateOutlineClones) {
+                                const outlineClone = createOutlineClone(drawnShape);
+                                if(outlineClone) {
+                                    drawnShape.listening(false);
+                                    mainLayer.current.add(outlineClone);
+                                }
+                            }
+                            log(DEBUG_LEVELS.DEV, 'Polyline finished on first save; destroying children!', true);
+                            resetPolyline();
+                        } else {
+                            // Just an intermediate point, reset snapped for next point
+                            openPolyLine.snapped = null;
+                            setBusyPainting(false);
+                        }
                     }, reason => {
                         log(DEBUG_LEVELS.ERROR, 'Error on penUp (no shape yet): ' + reason, true);
                         resetPolyline();
@@ -3190,8 +3296,9 @@ function Blackboard(props) {
 
         const strokeWidthPx = pctToPixels(strokeWidth, stageSize.width);
 
-        // Begin new line on mousedown / touchstart        
-        stageEl.current.addEventListener('pointerdown', (e) => penDown(mode, strokeWidthPx, e), { once: true, passive: true });
+        // Begin new line on mousedown / touchstart
+        // For Polyline, don't use 'once' so it fires for each intermediate point
+        stageEl.current.addEventListener('pointerdown', (e) => penDown(mode, strokeWidthPx, e), { once: mode !== 'Polyline', passive: true });
         
         /*stage.addEventListener('pointercancel lostpointercapture', function (e) {
             if(!e.isPrimary || !drawingPointer) return;
@@ -3203,10 +3310,12 @@ function Blackboard(props) {
         }, { passive: true })*/
 
         // Save shape to Postgres on mouseup / touchend
-        stageEl.current.addEventListener('pointerup', (e) => penUp(mode, e), { passive: false });
+        // For Polyline, don't use 'once' so it fires for each intermediate point
+        stageEl.current.addEventListener('pointerup', (e) => penUp(mode, e), { once: mode !== 'Polyline', passive: false });
     
         // Add points to line on mousemove / touchmove if currently painting
-        stageEl.current.addEventListener('pointermove', penMove, { once: true, passive: false });
+        // For Polyline, don't use 'once' so it fires throughout the drawing
+        stageEl.current.addEventListener('pointermove', penMove, { once: mode !== 'Polyline', passive: false });
         //console.info('listenToShapes added event listener for pointermove');
         // NOTE: We are passing the local lineStartTime here to event listener
         //stage.addEventListener('pointermove', (evt) => penMove(lineStartTime, evt), { passive: false });
