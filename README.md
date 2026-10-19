@@ -69,6 +69,14 @@ docker image rm blackboard-server -f
 ```
 After this command, the image is rebuilt with fresh settings for the backend. The same method can be applied to other containers as well, if they don't seem to get updated.
 
+NOTE: it is necessary to upgrade the docker images from time to time, especially when vulnerabilities have been found in nginx. It is loaded from the nginx:stable-alpine repo in the build phase, so it does not get updated with your host system updates, but only when rebuilding the images. To do this, run these commands in your installation directory:
+```
+docker stack rm bb
+docker image prune -a
+./docker-run.sh
+```
+This should not last more than a minute or two, or touch your database stored in a docker volume. Of course it's always good to have a backup just in case.
+
 ### Database errors
 If you get a database error, the database schema may have changed. In this case, you will need to reinitialize the database volume:
 ```
