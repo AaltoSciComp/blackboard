@@ -39,8 +39,7 @@ const SettingsSidebar = (props) => {
     const [settingsChanged, setSettingsChanged] = useState(false);
 
     /**
-     * Clear a single board (not actually, just marks the shapes
-     * as hidden in DB).
+     * Clear a single board data from the DB.
      */
     const clearBoard = useCallback(async () => {
         setShowConfirm(false);
