@@ -1,11 +1,8 @@
-FROM node:20-alpine as build-deps
+FROM node:22-alpine as build-deps
 # Define build-time arguments
 ARG TZ
 # Set environment variables
 ENV TZ=${TZ}
-# This is a workaround for Node 17.x issue. Remove when no longer needed.
-# See https://github.com/webpack/webpack/issues/14532
-#ENV NODE_OPTIONS=--openssl-legacy-provider
 WORKDIR /srv/app/client
 
 ARG USE_NGINX
