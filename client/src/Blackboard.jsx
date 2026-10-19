@@ -2394,12 +2394,13 @@ function Blackboard(props) {
     /**
      * Async function to do the actual saving of a cloned shape
      * @param {Shape} clonedShape Clone target (Konva shape object)
-     * @param {integer} dbId Database id of the clone source
+     * @param {string|bigint|number} dbId Database id of the clone source
      * @returns Promise
      */
     const cloneShape = async(clonedShape, dbId) => {
         let reqBody = {
-            shapeId: dbId,
+            // Shape ids are bigint in the API (see CloneShape/BigInt in OpenAPI spec), so always serialize as string
+            shapeId: String(dbId),
             x: toRelativeCoords(clonedShape.attrs.x, stageSize.width), 
             y: toRelativeCoords(clonedShape.attrs.y, stageSize.height)
         };
