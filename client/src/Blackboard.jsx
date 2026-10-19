@@ -3931,27 +3931,28 @@ function Blackboard(props) {
                     {<Rect visible={swipeOngoing} id="swiperect" x={0} y={0} width={stageSize.width} height={stageSize.height} fill={boardSettings.color} stroke="grey" strokeWidth={1}></Rect>}
                 </Layer>
                 <Layer id="drawlayer" ref={drawLayer} listening={true} perfectDrawEnabled={false}>
-                    {contextMenu && (
-                        <Portal>
-                        <ContextMenu
-                            {...contextMenu}
-                            onOptionSelected={handleOptionSelected}
-                        />
-                        </Portal>
-                    )}
-                    {fingerMenu && (
-                        <Portal>
-                        <ContextMenu
-                            {...fingerMenu}
-                            onOptionSelected={handleFingerSelection}
-                        />
-                        </Portal>
-                    )}
                 </Layer>
                 <Layer id="toollayer" ref={toolLayer} listening={false} perfectDrawEnabled={false} transformsEnabled="none">
                     <Cursor ref={konvaCursor} penLoc={penLoc} cursor={cursor} />
                 </Layer>
             </Stage>
+            {/* Menus must live outside the Stage: they are DOM content, rendered into document.body via portals */}
+            {contextMenu && (
+                <Portal>
+                <ContextMenu
+                    {...contextMenu}
+                    onOptionSelected={handleOptionSelected}
+                />
+                </Portal>
+            )}
+            {fingerMenu && (
+                <Portal>
+                <ContextMenu
+                    {...fingerMenu}
+                    onOptionSelected={handleFingerSelection}
+                />
+                </Portal>
+            )}
             </div>
         </Container >
     );
