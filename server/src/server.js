@@ -1334,10 +1334,13 @@ app.delete('/shapes/:sessionid', async (req, res, next) => {
         if(presenter) {
             const erasetime = Date.now();
             try {
-                await pool.query(`
-                    UPDATE shapes SET visible = 'f', erasetime = $1 where sessionid = $2 and id = ANY($3);
+                const { rows } = await pool.query(`
+                    UPDATE shapes SET visible = 'f', erasetime = $1 where sessionid = $2 and id = ANY($3) RETURNING boardid;
                     `, [erasetime, sid, req.body.dbIds]);
-                setMod(sid, req.params.board, Date.now());
+                // Bump the modification time of every board that had shapes deleted
+                // (req.params.board does not exist on this route, so it was always undefined)
+                const affectedBoards = [...new Set(rows.map(row => parseInt(row.boardid)))];
+                affectedBoards.forEach(bid => setMod(sid, bid, erasetime));
                 const json = {shapeids: req.body.dbIds}
                 io.to(sid.toString()).emit('shapes_deleted', json);
                 res.status(200).json(json)
@@ -1387,10 +1390,10 @@ app.put('/cloneshape/:sessionid', async (req, res, next) => {
                 setMod(sid, rows[0].boardid, Date.now());
                 io.to(sid.toString()).emit('draw_shape', { 
                     shapetype: rows[0].shapetype, 
-                    shapeid: rows[0].shapeid, 
+                    shapeid: rows[0].id,
                     stroke: rows[0].stroke, 
                     fill: rows[0].fill, 
-                    starttime: rows[0].startTime, 
+                    starttime: rows[0].starttime,
                     x: rows[0].x, 
                     y: rows[0].y, 
                     boardid: rows[0].boardid, 
@@ -1517,7 +1520,7 @@ app.delete('/lastline/:sessionid/:boardId', async (req, res, next) => {
                             UPDATE shapes SET visible = 'f', erasetime = $1 where sessionid = $2 and id = $3;
                             `, [erasetime, sid, rows[0].id]);
                         //fetchBoardData(rows[0].boardid, null);
-                        setMod(sid, rows[0].id, erasetime);
+                        setMod(sid, rows[0].boardid, erasetime);
                         const json = {boardid: parseInt(rows[0].boardid), shapeids: [rows[0].id]};
                         io.to(sid.toString()).emit('shapes_deleted', json);
                         return res.status(200).json(json)
