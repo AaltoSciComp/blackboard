@@ -1153,7 +1153,8 @@
                         console.log('Unknown shape type found!');
                         return {'error': false, 'reason': 'unknown shape type'};
                 }
-                thisShape.setAttr("dbId", shape.id);
+                // Live draw_shape messages use the key "shapeid" instead of "id"
+                thisShape.setAttr("dbId", shape.id !== undefined ? shape.id : shape.shapeid);
                 if (layer.main[target] === null) {
                     //console.info('drawLine: layer is null!');
                     return {'error': true, 'reason': 'layer_null'};
@@ -1501,7 +1502,9 @@
 
             socket.on('board_data', function (json) {
                 if (!gotSettings) return;
-                if(!cacheIsUpToDate(json.data.boardid, json.mod)) {
+                // Apply data if it's fresher than cache, or if we had marked the board
+                // dirty (e.g. after a failed local delete/recolor) and requested it
+                if(!cacheIsUpToDate(json.data.boardid, json.mod) || cacheDirty[json.data.boardid] === true) {
                     setCachedBoard(json.data.boardid, {mod: json.mod, data: json.data});
                     initBoard(json.data.boardid); // returns immediately if board is not in view
                 }
@@ -1513,7 +1516,7 @@
                 //console.info('setting board ', json.boardid, ' as dirty');
                 const physid = getPhysicalCanvasId(json.boardid);
                 const modShape = layer.main[physid].findOne(node => {
-                    return node.getAttr('dbId') === json.id
+                    return node.getAttr('dbId') == json.id // Note == instead of === since shape ids may be strings (bigint)
                 })
                 if(modShape !== undefined) {
                     // For now, just reload the board if we need to move a shape up or down the stack
@@ -1600,7 +1603,7 @@
                 try {
                     json.shapeids.forEach(shapeid => {
                         const deletedShape = layer.main[physid].findOne(node => {
-                            return node.getAttr('dbId') === shapeid
+                            return node.getAttr('dbId') == shapeid // Note == instead of === since shape ids may be strings (bigint)
                         })
                         if(deletedShape !== undefined) {
                             if(deletedShape.attrs.name === 'Dot') {
@@ -1637,7 +1640,7 @@
                 try {
                     json.shapeids.forEach(shapeid => {
                         const deletedShape = layer.main[physid].findOne(node => {
-                            return node.getAttr('dbId') === shapeid
+                            return node.getAttr('dbId') == shapeid // Note == instead of === since shape ids may be strings (bigint)
                         })
                         if(deletedShape !== undefined) {
                             deletedShape.destroy();
