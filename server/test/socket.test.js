@@ -48,17 +48,34 @@ function connectClient(url, timeout = 2000) {
 // Wait for the next occurrence of `event` on `socket`.
 function waitFor(socket, event, timeout = 2000) {
     return new Promise((resolve, reject) => {
-        const t = setTimeout(
-            () => reject(new Error(`timeout waiting for "${event}"`)),
-            timeout
-        )
-        socket.once(event, (...args) => {
+        function onEvent(...args) {
             clearTimeout(t)
             // With connectionStateRecovery enabled, socket.io appends the
             // recovery session id as an extra argument — ignore everything
             // after the payload itself.
             resolve(args[0])
-        })
+        }
+        const t = setTimeout(() => {
+            socket.off(event, onEvent)
+            reject(new Error(`timeout waiting for "${event}"`))
+        }, timeout)
+        socket.once(event, onEvent)
+    })
+}
+
+function expectNoEvent(socket, event, emit, timeout = 500) {
+    return new Promise((resolve, reject) => {
+        function onEvent() {
+            clearTimeout(t)
+            socket.off(event, onEvent)
+            reject(new Error(`unexpected "${event}" event`))
+        }
+        const t = setTimeout(() => {
+            socket.off(event, onEvent)
+            resolve()
+        }, timeout)
+        socket.once(event, onEvent)
+        emit()
     })
 }
 
@@ -135,8 +152,9 @@ describe('socket.io: viewer_login', () => {
         seedSession()
         const socket = await connectClient(baseUrl)
         try {
+            const loginResult = waitFor(socket, 'login_success')
             socket.emit('viewer_login', { sid: 1, pw: VIEWER_PW, offset: 0 })
-            const payload = await waitFor(socket, 'login_success')
+            const payload = await loginResult
 
             expect(payload).toMatchObject({
                 nvb: 4,
@@ -174,8 +192,9 @@ describe('socket.io: viewer_login', () => {
         // No session seeded -> session data cannot be loaded
         const socket = await connectClient(baseUrl)
         try {
+            const failed = waitFor(socket, 'login_failed')
             socket.emit('viewer_login', { sid: 42, pw: '', offset: 0 })
-            const reason = await waitFor(socket, 'login_failed')
+            const reason = await failed
             expect(reason).toMatch(/Session data not found/)
         } finally {
             socket.close()
@@ -188,13 +207,14 @@ describe('socket.io: request_boards', () => {
         seedSession()
         const socket = await connectClient(baseUrl)
         try {
+            const failed = waitFor(socket, 'login_failed')
             socket.emit('request_boards', {
                 sid: 1,
                 token: 'garbage',
                 from: 1,
                 to: 2,
             })
-            const reason = await waitFor(socket, 'login_failed')
+            const reason = await failed
             expect(reason).toMatch(/Not authenticated/)
         } finally {
             socket.close()
@@ -207,8 +227,9 @@ describe('socket.io: request_boards', () => {
         try {
             // Log in first so the server-side session cache is populated and
             // the socket has joined the session room.
+            const loginResult = waitFor(socket, 'login_success')
             socket.emit('viewer_login', { sid: 1, pw: VIEWER_PW, offset: 0 })
-            const login = await waitFor(socket, 'login_success')
+            const login = await loginResult
 
             // Request boards outside the range fetched by viewer_login (1-4),
             // so a matching board_data can only come from request_boards.
@@ -249,8 +270,9 @@ describe('socket.io: claim_board', () => {
         seedSession()
         const socket = await connectClient(baseUrl)
         try {
+            const rejected = waitFor(socket, 'fatal_error')
             socket.emit('claim_board', { sid: 1, token: 'not-a-token' })
-            const err = await waitFor(socket, 'fatal_error')
+            const err = await rejected
             expect(err).toMatch(/Presenter credentials required/)
         } finally {
             socket.close()
@@ -261,13 +283,15 @@ describe('socket.io: claim_board', () => {
         seedSession()
         const first = await connectClient(baseUrl)
         const token = presenterToken(REAL_HASH)
+        const firstClaimed = waitFor(first, 'presenter_connected')
         first.emit('claim_board', { sid: 1, token })
-        await waitFor(first, 'presenter_connected')
+        await firstClaimed
 
         const second = await connectClient(baseUrl)
         try {
+            const rejected = waitFor(second, 'fatal_error')
             second.emit('claim_board', { sid: 1, token })
-            const err = await waitFor(second, 'fatal_error')
+            const err = await rejected
             expect(err).toMatch(/Board already claimed/)
         } finally {
             first.close()
@@ -282,11 +306,13 @@ describe('socket.io: presenter-only relays', () => {
         const presenter = await connectClient(baseUrl)
         const viewer = await connectClient(baseUrl)
         // Viewer joins the session room via a successful login
+        const loginResult = waitFor(viewer, 'login_success')
         viewer.emit('viewer_login', { sid: 1, pw: VIEWER_PW, offset: 0 })
-        await waitFor(viewer, 'login_success')
+        await loginResult
 
+        const presenterClaimed = waitFor(presenter, 'presenter_connected')
         presenter.emit('claim_board', { sid: 1, token: presenterToken(REAL_HASH) })
-        await waitFor(presenter, 'presenter_connected')
+        await presenterClaimed
 
         try {
             const received = waitFor(viewer, 'laser_on')
@@ -311,17 +337,14 @@ describe('socket.io: presenter-only relays', () => {
         await waitFor(intruder, 'login_success')
 
         try {
-            let got = false
-            intruder.on('laser_on', () => (got = true))
-            intruder.emit('laser_on', {
-                sid: 1,
-                token,
-                color: '#00ff00',
-                size: 1,
+            await expectNoEvent(intruder, 'laser_on', () => {
+                intruder.emit('laser_on', {
+                    sid: 1,
+                    token,
+                    color: '#00ff00',
+                    size: 1,
+                })
             })
-            // Give any (incorrect) relay a chance to arrive, then assert silence
-            await new Promise((r) => setTimeout(r, 250))
-            expect(got).toBe(false)
         } finally {
             intruder.close()
         }
@@ -350,14 +373,12 @@ describe('socket.io: admin_notification', () => {
         const receiver = await connectClient(baseUrl)
         const sender = await connectClient(baseUrl)
         try {
-            let got = false
-            receiver.on('admin_notification', () => (got = true))
-            sender.emit('admin_notification', {
-                token: 'forged-token',
-                message: 'should not broadcast',
+            await expectNoEvent(receiver, 'admin_notification', () => {
+                sender.emit('admin_notification', {
+                    token: 'forged-token',
+                    message: 'should not broadcast',
+                })
             })
-            await new Promise((r) => setTimeout(r, 250))
-            expect(got).toBe(false)
         } finally {
             receiver.close()
             sender.close()
