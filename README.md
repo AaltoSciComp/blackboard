@@ -271,6 +271,51 @@ Documentation for messages passed through websockets are documented in /server/p
 
 TODO: add tools for regenerating the AsyncAPI documentation when there are changes in message formats
 
+# Running tests
+If you want to participate in the development, or just want to make sure the code you have works (mostly) as intended, here's how to run the available tests on your environment.
+
+## Backend tests
+You can run the backend tests either locally or inside a Docker container. The test files and their coverage are currently as follows:
+* server/test/error-handler.test.js: tests error handling middleware
+* server/test/pdf_utils.test.js: tests pdf creation commands with a mock canvas recorder
+* server/test/api.test.js: REST endpoints via supertest (login, sessions, shape CRUD, OpenAPI validation)
+* server/test/socket.test.js: socket.io events via real websocket clients (viewer_login, claim_board, relays, admin)
+* server/test/fake-pg.js: In-memory fake database (not a test file itself)
+
+### Local testing
+Run the whole server test suite:
+```
+cd server
+npm test          # run the whole suite once, OR
+npm run test:watch  # watch mode — re-runs on file changes
+```
+Run a single test file or test(s) matching a string:
+```
+npx vitest run test/api.test.js
+npx vitest run test/socket.test.js
+npx vitest run -t "viewer_login"   # only tests matching a name
+```
+
+### Testing in Docker
+In the repository root, run:
+```
+docker compose -f debug-compose.yml --profile test run --rm --no-deps blackboard-server-test
+```
+--rm cleans up the container after the run; --no-deps skips starting the DB (the tests use the in-memory fake, so blackboard-db is not needed).
+
+If you have changed package.json dependencies, rebuild the image first:
+```
+docker compose -f debug-compose.yml --profile test build blackboard-server-test
+```
+(Source files, test/, and vitest.config.js are volume-mounted, so code changes don't need a rebuild.)
+
+The test service lives in debug-compose.yml behind the test profile, so it never starts when you run debug-run.sh / docker-run.sh normally.
+
+### Notes for creating new tests
+* API tests: use the exported app + supertest, seed the fake DB via seedSession()/db.sessions.push(...). The fake pool throws errors on SQL it doesn't recognize, so new endpoints may need new handlers in test/fake-pg.js.
+* Socket tests: use the connectClient / waitFor helpers already in socket.test.js. If you add presenter-only flow tests, remember sd (the server's session cache) is cleared in beforeEach.
+* Auth tokens: presenter = jwt.sign({role:'presenter'}, presenterhash + SERVER_SECRET), viewer = signed with viewerpw + SERVER_SECRET, admin = signed with SERVER_SECRET alone — mirror these helpers rather than inventing new ones.
+
 # Additional notes / gotchas
 * The name of the volume containing the Blackboard database is *"blackboard_bbdata"* when running in development (with docker-compose), and *"bb_bbdata"* when running in production with Docker stack/swarm (assuming you have named the stack *"bb"*).
 * Logs can be examined from both the Docker services (docker service logs xxx, xxx being the *service name*), as well as containers (docker logs yyy, yyy being the *container ID*). These may not be identical, so when looking for issues, be sure to check them both.

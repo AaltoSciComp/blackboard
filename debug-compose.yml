@@ -53,6 +53,28 @@ services:
       #- "--inspect-brk=0.0.0.0"
       #- "." 
   
+  # One-shot backend test runner: docker compose --profile test run --rm blackboard-server-test
+  # Runs the vitest suite from server/test against the in-memory fake database.
+  blackboard-server-test:
+    profiles: ["test"]
+    build:
+      context: ./server
+      target: dev
+    image: blackboard-server
+    pull_policy: build
+    container_name: blackboard-server-test
+    volumes:
+      - ./server/src:/srv/app/server/src
+      - ./server/test:/srv/app/server/test
+      - ./server/vitest.config.js:/srv/app/server/vitest.config.js
+    environment:
+      HOME: /home
+      TZ: ${TZ}
+    networks:
+      - app
+      - database
+    command: npm test
+
   # React frontend
   blackboard-client:
     build:
