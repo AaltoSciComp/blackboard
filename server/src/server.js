@@ -11,7 +11,7 @@ const { CERTPATHS, DEF_BOARD, DEF_UI } = require('./constants.js');
 const { pdf_drawLine, pdf_makeKonvaGrid } = require('./pdf_utils.js');
 
 // Using the default psql port 5432, need to specify new port here if changed
-const pool = new Pool({
+var pool = new Pool({
     user: 'blackboard',
     host: 'blackboard-db',
     database: 'blackboard',
@@ -92,8 +92,9 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 process.on('unhandledRejection', (reason, promise) => {
-    const error = createHttpError.InternalServerError(`${reason.stack ?? reason}`);
-    return next(error);
+    // Log and keep the server alive; there is no request context here to
+    // forward an error to.
+    logger.error('Unhandled promise rejection:', reason?.stack ?? reason)
 })
 
 var sd = []; // session-specific data
@@ -150,12 +151,18 @@ app.use(express.json({limit:'1mb'})); // default is 100kb, may prevent drawing l
 //app.disable('view cache'); // debug only
 app.disable('x-powered-by'); // Don't encourage targeted attacks towards Node/Express platform
 
+// The Express app is exported for testing (see test/); the server is only
+// started when this file is run directly, not when imported by the test runner.
+const IS_MAIN = require.main === module
+
 function readableTime(t) {
     const date = new Date(t);
     return date.toLocaleTimeString("fi-FI");
 }
 
-var presenterCheck = setInterval(() => checkPresenterConnection(), 10000);
+if (IS_MAIN) {
+    presenterCheck = setInterval(() => checkPresenterConnection(), 10000);
+}
 
 async function getBoard(sid, boardId) {
     if(!boardId || !sid) {
@@ -459,8 +466,8 @@ function signToken(pw, role="viewer") {
 io.on('connection', function (socket) {
 
     socket.on('admin_notification', async (json) => {
-        if(isAdmin(json.token)){
-            const timenow = readableTime(Date.now());
+        const timenow = readableTime(Date.now());
+        if(await isAdmin(json.token)){
             io.emit('admin_notification', timenow + ': ' + json.message);
             logger.info(timenow, ' Broadcasted admin notification: ', json.message);
         } else {
@@ -562,7 +569,8 @@ io.on('connection', function (socket) {
     socket.on('request_boards', function (json) {
         const sid = parseInt(json.sid);
         if(sid > 0) {
-            if(isLogged(sid, json.token) !== undefined) {
+            // NOTE: isLogged reads sd[sid].viewerpw, so sd[sid] must exist first
+            if(sd[sid] && isLogged(sid, json.token)) {
                 for (var i = json.from; i <= json.to; i++) {
                     logger.verbose('request_boards: also fetching sid: ', sid, ', i: ', i);
                     fetchBoardData(sid, i)
@@ -581,14 +589,14 @@ io.on('connection', function (socket) {
      * If presentersocket is already defined and still connected, refuse any attempts
      * to claim board ownership.
      */
-    socket.on('claim_board', function (json) {
+    socket.on('claim_board', async function (json) {
         const sid = parseInt(json.sid);
         if(isNaN(sid)) {
             socket.emit('fatal_error', 'Presentation id missing');
             logger.warn('claim_board: missing session id');
             return;
         }
-        if(isPresenter(sid, json.token)){
+        if(await isPresenter(sid, json.token)){
             if(sd[sid].presentersocket !== undefined) {
                 if(sd[sid].presentersocket.connected) {
                     logger.warn('Failed to claim board presenter status: already claimed');
@@ -868,7 +876,7 @@ app.use(function(req, res, next) {
         res.end();
     } else {
         if (!req.headers.authorization) {
-            const error = createHttpError.Forbidden(`sid ${sid}: No credentials sent`);
+            const error = createHttpError.Forbidden('No credentials sent');
             return next(error);
         }
         next();
@@ -885,7 +893,7 @@ app.patch('/settings/:sessionid', async (req, res, next) => {
         return next(error);
     }
     if(sid > 0) {
-        if(isPresenter(sid, parseToken(req.headers.authorization))) {
+        if(await isPresenter(sid, parseToken(req.headers.authorization))) {
             if(req.body.settings) {
                 logger.verbose(req.body.settings);
                 // TODO: Add some sanity checks on required fields here...
@@ -922,7 +930,7 @@ app.patch('/session/:sessionid', async (req, res, next) => {
         return next(error);
     }
     if(sid > 0) {
-        if(isPresenter(sid, parseToken(req.headers.authorization))) {
+        if(await isPresenter(sid, parseToken(req.headers.authorization))) {
             let newPresenterToken;
             logger.verbose(req.body);
             // Take new passwords from body, or use previous if not given
@@ -1746,7 +1754,7 @@ async function imageProxy(req, res, next) {
     logger.verbose('url:',req.params.url);
     const sid = parseInt(req.params.sessionid);
     if(sid > 0) {
-        if(isPresenter(sid, parseToken(req.headers.authorization))) {
+        if(await isPresenter(sid, parseToken(req.headers.authorization))) {
             res.header("Access-Control-Allow-Origin", "*");
             res.header("Access-Control-Allow-Methods", "GET");
             //res.header("Access-Control-Allow-Headers", req.header('access-control-request-headers'));
@@ -2070,7 +2078,7 @@ app.use(function (err, req, res, next) {
     res.status(err.status ?? 500).json();
 });*/
 
-app.all('/{*any}', function (req, res) {
+app.all('/{*any}', function (req, res, next) {
     const error = createHttpError(404, 'Not found');
     logger.info('creating a 404');
     next(error);
@@ -2078,7 +2086,21 @@ app.all('/{*any}', function (req, res) {
 
 app.use(errorHandlerMiddleware);
 
-// Listen to connections from any client (0.0.0.0)
-server.listen(NODE_SERVER_PORT, '0.0.0.0', function () {
-    logger.warn(`Node.js running on port ${NODE_SERVER_PORT}`);
-})
+if (IS_MAIN) {
+    // Listen to connections from any client (0.0.0.0)
+    server.listen(NODE_SERVER_PORT, '0.0.0.0', function () {
+        logger.warn(`Node.js running on port ${NODE_SERVER_PORT}`);
+    })
+} else {
+    // Imported (by the test runner): expose internals for testing.
+    // __setPoolForTesting lets tests inject a fake pg pool; in production this
+    // branch is never reached because the server is always run directly.
+    module.exports = {
+        app: app,
+        server: server,
+        io: io,
+        sd: sd,
+        bds: bds,
+        __setPoolForTesting: (p) => { pool = p; }
+    }
+}
