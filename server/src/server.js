@@ -200,7 +200,7 @@ const updateSessionCache = async (sid) => {
         }
     } catch (error) {
         logger.error('updateSessionCache', error);
-        return false;
+        return null;
     }
 }
 
@@ -827,7 +827,14 @@ app.post('/login/:sessionid', async (req, res, next) => {
         // Note: updateSessionCache fills the local cache at sd[sid] with info from DB
         const sessionfound = await updateSessionCache(sid);
         //logger.verbose('sdata: ', sdata);
-        if(!sessionfound) return res.status(500).send('Could not get presentation info');
+        if(sessionfound === null) {
+            const error = createHttpError.InternalServerError('Could not get presentation info');
+            return next(error);
+        }
+        if(!sessionfound) {
+            const error = createHttpError.NotFound(`sid ${sid}: Presentation was not found`);
+            return next(error);
+        }
         const result = await bcrypt.compare(req.body.presenterpw, sd[sid].presenterhash);
         if(!result) {
             // Passwords do not match

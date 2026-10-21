@@ -56,7 +56,7 @@ beforeEach(() => {
 describe('GET /sessions', () => {
     it('returns public sessions with has_pw flag', async () => {
         await seedSession({ ispublic: true, viewerpw: 'secret' })
-        await seedSession({ ispublic: false, viewerpw: '' })
+        await seedSession({ id: 2, ispublic: false, viewerpw: '' })
 
         const res = await request(app).get('/sessions').expect(200)
 
@@ -130,7 +130,7 @@ describe('POST /login/:sessionid', () => {
             const res = await request(app)
                 .post('/login/999')
                 .send({ presenterpw: 'pw' })
-            expect(res.status).toBe(500)
+            expect(res.status).toBe(404)
         })
 
         it('rejects a wrong password with 401', async () => {
