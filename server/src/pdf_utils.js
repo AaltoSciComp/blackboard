@@ -168,7 +168,7 @@ function pdf_drawLine(doc, options, points) {
         // no tension but bezier
         n = 2;
 
-        while (n < length) {
+        while (n + 5 < length) {
             doc.bezierCurveTo(
             points[n++],
             points[n++],

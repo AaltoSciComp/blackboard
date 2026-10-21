@@ -82,16 +82,30 @@ describe('pdf_drawLine', () => {
         expect(countOf(ctx, 'stroke')).toBe(1)
     })
 
-    it('uses bezier curves when bezier flag is set and tension is 0', () => {
+    it('uses bezier curves for complete point groups when tension is 0', () => {
         const ctx = mockContext()
-        // bezier consumes points in groups of 6 starting at index 2
+        // The first pair is the start; each cubic segment uses six more values.
+        pdf_drawLine(
+            ctx,
+            { tension: 0, bezier: true, closed: false, x: 0, y: 0, strokeEnabled: true },
+            [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6]
+        )
+        const curves = ctx.calls.filter((c) => c.fn === 'bezierCurveTo')
+        expect(curves).toHaveLength(2)
+        expect(curves.every((curve) => curve.args.every(Number.isFinite))).toBe(true)
+        expect(countOf(ctx, 'lineTo')).toBe(0)
+    })
+
+    it('ignores an incomplete trailing bezier point group', () => {
+        const ctx = mockContext()
         pdf_drawLine(
             ctx,
             { tension: 0, bezier: true, closed: false, x: 0, y: 0, strokeEnabled: true },
             [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5]
         )
-        expect(countOf(ctx, 'bezierCurveTo')).toBe(Math.ceil((12 - 2) / 6))
-        expect(countOf(ctx, 'lineTo')).toBe(0)
+        const curves = ctx.calls.filter((c) => c.fn === 'bezierCurveTo')
+        expect(curves).toHaveLength(1)
+        expect(curves[0].args.every(Number.isFinite)).toBe(true)
     })
 
     it('uses quadratic/bezier curves when tension is non-zero', () => {
