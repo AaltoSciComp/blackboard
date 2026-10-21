@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest'
+
+const originalNodeEnv = process.env.NODE_ENV
+process.env.NODE_ENV = 'test'
 
 // error-handler logs through npmlog; redirect its output so the test report
 // is not flooded with the (intentional) error stacks.
@@ -7,7 +10,15 @@ logger.stream = { write: () => {} }
 
 const errorHandler = require('../src/error-handler.js')
 
-function makeRes() {
+afterAll(() => {
+    if (originalNodeEnv === undefined) {
+        delete process.env.NODE_ENV
+    } else {
+        process.env.NODE_ENV = originalNodeEnv
+    }
+})
+
+function makeRes(accept = '*/*') {
     const res = {
         statusCode: 200,
         headersSent: false,
@@ -28,7 +39,9 @@ function makeRes() {
             return this
         },
         format(serializers) {
-            const chosen = serializers['application/json'] ?? serializers.default
+            const chosen = accept === 'text/plain'
+                ? serializers.default
+                : serializers['application/json'] ?? serializers.default
             chosen()
         },
     }
@@ -77,8 +90,31 @@ describe('error-handler middleware', () => {
     it('includes the error message in the JSON body outside production', () => {
         const err = new Error('visible message')
         errorHandler(err, req, res, next)
-        // NODE_ENV is not "production" under vitest, so the body should be present
         expect(res.jsonBody.message).toContain('visible message')
+    })
+
+    it('uses the plain-text response for text/plain requests', () => {
+        const err = new Error('visible message')
+        res = makeRes('text/plain')
+        errorHandler(err, req, res, next)
+        expect(res.contentType).toBe('text/plain')
+        expect(res.sendBody).toContain('visible message')
+    })
+
+    it('does not include error details in production responses', async () => {
+        process.env.NODE_ENV = 'production'
+        vi.resetModules()
+
+        try {
+            const productionLogger = require('npmlog')
+            productionLogger.stream = { write: () => {} }
+            const productionErrorHandler = (await import('../src/error-handler.js')).default
+            productionErrorHandler(new Error('private details'), req, res, next)
+            expect(res.jsonBody).toEqual({ message: undefined })
+        } finally {
+            process.env.NODE_ENV = 'test'
+            vi.resetModules()
+        }
     })
 
     it('delegates to next() when headers are already sent', () => {
