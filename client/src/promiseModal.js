@@ -37,8 +37,7 @@ export default function reactModal(renderModal, options = {}) {
     return confirmation.finally(() => {
         const onSubmit = noop;
         const onDismiss = noop;
-        hideModal({ onSubmit, onDismiss }, () => {
-            setTimeout(destroyModal, destructionDelay);
-        });
+        hideModal({ onSubmit, onDismiss });
+        setTimeout(destroyModal, destructionDelay);
     });
 }
