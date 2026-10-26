@@ -49,6 +49,16 @@ From here, you can create new presentations, and join existing ones as either a 
 
 The viewers see 1-16 boards at a time, depending on the configuration set by the presenter. By default, navigation is done by the presenter, but viewers can detach from the session and browse the boards using keyboard arrows or on-screen buttons. The browsing is limited to those boards the viewer has "seen", as the data comes from the browser cache in offline mode.
 
+### Automated browser tests
+The client end-to-end tests use Playwright and a disposable PostgreSQL/backend stack. They require Docker, Node.js, and the Playwright Chromium browser. From the repository root, install the client dependencies and browser once, then run:
+```
+cd client
+npm install
+npx playwright install chromium
+npm run test:e2e
+```
+The test stack uses port 8080 for the backend and removes its database volume after the run. It does not use the regular development database volume.
+
 For more about how to use the system, see the documentation under /docs (TODO: Add the link to actual documentation location in GitHub here).
 
 ## Upgrading code to the latest version

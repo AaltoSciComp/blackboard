@@ -30,7 +30,9 @@
     "build": "vite build",
     "serve": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "sh ./e2e/run.sh",
+    "test:e2e:run": "playwright test"
   },
   "browserslist": {
     "production": [
@@ -45,6 +47,7 @@
     ]
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@simbathesailor/use-what-changed": "^2.0.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.0",

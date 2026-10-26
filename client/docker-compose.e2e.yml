@@ -1,0 +1,45 @@
+services:
+  blackboard-db:
+    image: blackboard-db-e2e
+    build:
+      context: ../db
+      args:
+        TZ: UTC
+    environment:
+      POSTGRES_PASSWORD: blackboard
+      POSTGRES_USER: blackboard
+      POSTGRES_DB: blackboard
+      TZ: UTC
+      PGTZ: UTC
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U blackboard -d blackboard"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    volumes:
+      - e2e-db-data:/var/lib/postgresql/data
+
+  blackboard-server:
+    image: blackboard-server-e2e
+    build:
+      context: ../server
+      target: dev
+    depends_on:
+      blackboard-db:
+        condition: service_healthy
+    environment:
+      NODE_SERVER_PORT: 8080
+      SERVER_SECRET: playwright-e2e-secret
+      HOME: /tmp
+      TZ: UTC
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/sessions').then(response => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 2s
+      timeout: 3s
+      retries: 45
+      start_period: 10s
+
+volumes:
+  e2e-db-data:
