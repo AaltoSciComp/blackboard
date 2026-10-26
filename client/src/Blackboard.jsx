@@ -50,6 +50,12 @@ import usePrevious from "./hooks/usePrevious.js";
 import { Circle } from 'react-konva';
 
 import { currentBoardAtom } from "./atoms.js";
+import { getBoardDirectionFromSwipe, getBoardNavigationTarget, getShapeHistoryActionFromSwipe } from "./boardNavigation.js";
+import { getBoardGridWindow } from "./boardGridWindow.js";
+import { createShapeCloneRequestBody, createShapeRequestBody, createShapeTransformRequestBody, createShapeUpdateRequestBody } from "./shapeRequest.js";
+import { enqueueShapeDeletion, enqueueShapeRecolor, takeShapeDeletionBatch, takeShapeRecolorBatch } from "./shapeMutationQueue.js";
+import { getGridSnappedCoordinates } from "./gridSnapping.js";
+import { getSimpleModeUpdates } from "./uiMode.js";
 
 setUseWhatChange(process.env.NODE_ENV === 'development');
 
@@ -272,11 +278,7 @@ function Blackboard(props) {
      * @returns coordinates of a nearest grid corner point
      */
     const getSnappedCoordinates = useCallback((x,y,useSqrt=false) => {
-        const blockX = useSqrt ? gridBlockSize.x * SQRT2_DIV2 : gridBlockSize.x;
-        const blockY = useSqrt ? gridBlockSize.y * SQRT2_DIV2 : gridBlockSize.y;
-        const newX = Math.round(x / blockX) * blockX;
-        const newY = Math.round(y / blockY) * blockY;
-        return [newX, newY];
+        return getGridSnappedCoordinates(x, y, gridBlockSize, useSqrt);
     },[gridBlockSize]);
 
     // Returns a human-readable label for a given tool
@@ -739,8 +741,7 @@ function Blackboard(props) {
     const addShapeToDeleteQueue = (target) => {
         if(target?.attrs?.dbId) {
             const dbid = BigInt(target.attrs.dbId);
-            if(dbid) {
-                shapes_to_delete.add(dbid);
+            if(enqueueShapeDeletion(shapes_to_delete, dbid)) {
                 // If the shape to be deleted is an outline clone (of a filled shape),
                 // we need to delete both the clone and original shape.
                 if(target.attrs.clone) {
@@ -767,12 +768,7 @@ function Blackboard(props) {
     const addShapeToRecolorQueue = (target, color) => {
         if(target?.attrs?.dbId) {
             const dbid = BigInt(target.attrs.dbId);
-            if(dbid) {
-                if(shapes_to_recolor[color] !== undefined) {
-                    if(!shapes_to_recolor[color].includes(dbid)) {
-                        shapes_to_recolor[color].push(dbid);
-                    }
-                } else shapes_to_recolor[color] = [dbid];
+            if(enqueueShapeRecolor(shapes_to_recolor, color, dbid)) {
                 let aTarget;
                 /**
                  * If we are dealing with a filled shape, we should hit its outline clone
@@ -1732,41 +1728,9 @@ function Blackboard(props) {
         }
     };
 
-    /**
-     * Return the board number for given navigation command
-     * along with if the current board needs to be changed
-     */
-    const boardNumToNavigateWith = (where) => {
-        let newB;
-        switch (where) {
-            case 'next':
-                newB = parseInt(currentBoard) + 1;
-                break;
-            case 'previous':
-                newB = Math.max(parseInt(currentBoard) - 1, 1);
-                break;
-            case 'down':
-                const targetD = currentBoard - parseInt(Math.sqrt(numBoards));
-                newB = Math.max(1, targetD); // Don't let it go below zero
-                break;
-            case 'up':
-                const targetU = currentBoard + parseInt(Math.sqrt(numBoards));
-                newB = Math.min(boardLimits.end, targetU); // Don't let it go above last
-                break;
-            case 'last':
-                newB = parseInt(boardLimits.end);
-                break;
-            case 'first':
-            default:
-                newB = 1;
-                break;
-        }
-        return {new: newB, changed: currentBoard === newB ? false : true};
-    }
-
     const navigateBoard = (where) => {
         //if(busyPainting) return;
-        const nextBoard = boardNumToNavigateWith(where);
+        const nextBoard = getBoardNavigationTarget(where, currentBoard, numBoards, boardLimits);
         if(nextBoard.changed && nextBoard.new > 0) {
             mainLayer.current.destroyChildren();
             changeBoard(nextBoard.new);
@@ -1840,22 +1804,11 @@ function Blackboard(props) {
             log(DEBUG_LEVELS.DEV, 'handle3fSwipeEnd: x: ' + swipeX + ', y: ' + swipeY, true);
             setSwipeStart(false);
             swipeRef.current = false;
-            if(Math.abs(swipeX) > Math.abs(swipeY)) {
-                if(swipeX > SWIPE_X_THRESHOLD) {
-                    log(DEBUG_LEVELS.DEBUG, '3f left', true);
-                    navigateBoard('previous');
-                } else if(swipeX < -SWIPE_X_THRESHOLD) {
-                    log(DEBUG_LEVELS.DEBUG, '3f right', true);
-                    navigateBoard('next');
-                }
-            } else {
-                if(swipeY > SWIPE_Y_THRESHOLD) {
-                    log(DEBUG_LEVELS.DEBUG, '3f down', true);
-                    navigateBoard('down');
-                } else if(swipeY < -SWIPE_Y_THRESHOLD) {
-                    log(DEBUG_LEVELS.DEBUG, '3f up', true);
-                    navigateBoard('up');
-                }
+            const direction = getBoardDirectionFromSwipe(swipeX, swipeY);
+            if(direction) {
+                const swipeName = { previous: 'left', next: 'right', down: 'down', up: 'up' }[direction];
+                log(DEBUG_LEVELS.DEBUG, '3f ' + swipeName, true);
+                navigateBoard(direction);
             }
             stage.position({x: 0, y: 0});
         }
@@ -1874,15 +1827,14 @@ function Blackboard(props) {
             setSwipeStart(false);
             swipeRef.current = false;
             log(DEBUG_LEVELS.DEV, 'handle2fSwipeEnd: x: ' + swipeX + ', y: ' + swipeY);
-            if(Math.abs(swipeX) > Math.abs(swipeY)) {
-                if(swipeX > SWIPE_X_THRESHOLD) {
-                    log(DEBUG_LEVELS.DEBUG, '2f right', true);
-                    clearLast();
-                } else if(swipeX < -SWIPE_X_THRESHOLD) {
-                    log(DEBUG_LEVELS.DEBUG, '2f left', true);
-                    restoreLast();
-                }
-            } else {
+            const historyAction = getShapeHistoryActionFromSwipe(swipeX, swipeY);
+            if(historyAction === 'undo') {
+                log(DEBUG_LEVELS.DEBUG, '2f right', true);
+                clearLast();
+            } else if(historyAction === 'redo') {
+                log(DEBUG_LEVELS.DEBUG, '2f left', true);
+                restoreLast();
+            } else if(Math.abs(swipeX) <= Math.abs(swipeY)) {
                 if(swipeY > SWIPE_Y_THRESHOLD) {
                     log(DEBUG_LEVELS.DEBUG, '2f down', true);
                 } else if(swipeY < -SWIPE_Y_THRESHOLD) {
@@ -1931,36 +1883,10 @@ function Blackboard(props) {
         }
         try {
             const stage = stageEl.current.getStage();
-            let reqBody = {
-                boardid: currentBoard,
-                shapedetails: {
-                    rotation: shape.attrs.rotation ?? 0,
-                    scaleX: shape.attrs.scaleX ?? 1,
-                    scaleY: shape.attrs.scaleY ?? 1,
-                }
-            }
-
-            // For arrows, save the updated points and position
-            if(shape.attrs.name === 'Arrow' && shape.attrs.points) {
-                const points = shape.attrs.points;
-                // Store arrow points in the same format as initial creation: [[0,0,0], [0, relative_x, relative_y]]
-                reqBody.shapedata = [
-                    [0, 0, 0],
-                    [0, pixelsToPct(points[2], stage.width()), pixelsToPct(points[3], stage.height())]
-                ];
-                // Arrow position is stored separately
-                reqBody.x = toRelativeCoords(shape.attrs.x, stage.width()).toString();
-                reqBody.y = toRelativeCoords(shape.attrs.y, stage.height()).toString();
-            } else {
-                // For other shapes, send x, y normally
-                reqBody.x = toRelativeCoords(shape.attrs.x, stage.width()).toString();
-                reqBody.y = toRelativeCoords(shape.attrs.y, stage.height()).toString();
-            }
-
-            if(shape.attrs.radiusX) reqBody.shapedetails['radiusX'] = pixelsToPct(shape.attrs.radiusX, stage.width());
-            if(shape.attrs.radiusY) reqBody.shapedetails['radiusY'] = pixelsToPct(shape.attrs.radiusY, stage.height());
-            if(shape.attrs.width) reqBody.shapedetails['width'] = pixelsToPct(shape.attrs.width, stage.width());
-            if(shape.attrs.height) reqBody.shapedetails['height'] = pixelsToPct(shape.attrs.height, stage.height());
+            const reqBody = createShapeTransformRequestBody(shape.attrs, currentBoard, {
+                width: stage.width(),
+                height: stage.height(),
+            });
 
             const resp = await fetch(ENDPOINT + `/shape/` + props.sid + '/' + shape.attrs.dbId, {
                 method: 'PATCH',
@@ -1991,10 +1917,7 @@ function Blackboard(props) {
      */
     const handleShapeUpdate = async (shape, properties) => {
         //setBusyPainting(true);
-        // For now, add boardId to the object as it is required. Later allow shape to change board?
-        properties['boardid'] = currentBoard;
-        // starttime needs to be transferred as string, not number (due to OpenAPI spec)
-        if(properties.starttime) properties['starttime'] = properties.starttime.toString();
+        const requestBody = createShapeUpdateRequestBody(properties, currentBoard);
         try {
             const resp = await fetch(ENDPOINT + `/shape/` + props.sid + '/' + shape.attrs.dbId, {
                 method: 'PATCH',
@@ -2003,7 +1926,7 @@ function Blackboard(props) {
                     'Content-Type': 'application/json',
                     'Authorization': 'Bearer ' + getPresenterToken(props.sid)
                 },
-                body: JSON.stringify(properties)
+                body: JSON.stringify(requestBody)
             })
             if(!resp.ok) {
                 log(DEBUG_LEVELS.ERROR, 'Error updating shape!');
@@ -2027,8 +1950,7 @@ function Blackboard(props) {
     const batchShapeDelete = async () => {
         //console.info('calling batchShapeDelete');
         if(shapes_to_delete.size) {
-            const copy = Array.from(shapes_to_delete); // take items in the queue
-            shapes_to_delete.clear(); // and empty the queue so we can accept more right away
+            const copy = takeShapeDeletionBatch(shapes_to_delete);
             log(DEBUG_LEVELS.DEV, 'batchShapeDelete: deleting ' + copy);
             try {
                 const resp = await fetch(ENDPOINT + `/shapes/` + props.sid , {
@@ -2060,14 +1982,12 @@ function Blackboard(props) {
      * Once again, we take a copy and operate on that, deleting any items in the original for that color.
      */
      const batchShapeRecolor = async () => {
-        const colorsToProcess = Object.keys(shapes_to_recolor);
-        if(colorsToProcess.length) {
-            // Handle the first color to be processed and remove it
-            const arrayOfShapes = shapes_to_recolor[colorsToProcess[0]];
-            delete shapes_to_recolor[colorsToProcess[0]];
+        const batch = takeShapeRecolorBatch(shapes_to_recolor);
+        if(batch) {
+            const { color, databaseIds } = batch;
             //setBusyPainting(true);
             try {
-                log('batchShapeRecolor: recolor to ', colorsToProcess[0], ':', arrayOfShapes);
+                log('batchShapeRecolor: recolor to ', color, ':', databaseIds);
                 const resp = await fetch(ENDPOINT + `/shaperecolor/` + props.sid + '/', {
                     method: 'PATCH',
                     headers: {
@@ -2076,7 +1996,7 @@ function Blackboard(props) {
                         'Authorization': 'Bearer ' + getPresenterToken(props.sid)
                     },
                     // TODO: should handle the cases where we change boards during batch operations
-                    body: JSON.stringify({color: colorsToProcess[0], dbIds: arrayOfShapes, boardid: currentBoard})
+                    body: JSON.stringify({color, dbIds: databaseIds, boardid: currentBoard})
                 })
                 if (!resp.ok) {
                     log(DEBUG_LEVELS.ERROR, 'Error recoloring shapes!');
@@ -2130,19 +2050,24 @@ function Blackboard(props) {
     }
 
     const switchToSimpleMode = () => {
-        if(!currentTool.simple) {
+        const updates = getSimpleModeUpdates(currentTool, fill, stroke, ui, {
+            name: 'Line',
+            label: getToolLabel('Line'),
+            simple: true,
+        });
+        if(updates.tool) {
             log(DEBUG_LEVELS.WARN, 'Note: Current tool changed into draw due to UI mode change.');
-            handleToolChange({name: 'Line', label: getToolLabel('Line')});
+            handleToolChange(updates.tool);
         };
-        if(fill.enabled) {
+        if(updates.fill) {
             log(DEBUG_LEVELS.WARN, 'Note: Fill is not supported in simple mode, so it is now disabled.')
-            setFill({...fill, enabled: false});
+            setFill(updates.fill);
         }
-        if(!stroke.enabled) {
+        if(updates.stroke) {
             log(DEBUG_LEVELS.WARN, 'Note: Stroke needs to be enabled in simple mode, so it is now.')
-            setStroke({...stroke, enabled: true});
+            setStroke(updates.stroke);
         }
-        setUiOptions({...ui, complex: false});
+        setUiOptions(updates.ui);
     }
 
     const switchToAdvancedMode = () => {
@@ -2268,8 +2193,7 @@ function Blackboard(props) {
             throw new Error('ReConfigureBoards called with a non-number: ', nvb);
         }
         log(DEBUG_LEVELS.DEV, 'Emitting reconfigure_boards for ab ' + parseInt(currentBoard) +  ' and nvb ' + parseInt(nvb));
-        const newTo = Math.max(currentBoard, nvb);
-        const newFrom = newTo - nvb + 1;
+        const { from: newFrom, to: newTo } = getBoardGridWindow(currentBoard, nvb);
         if (newTo !== boardLimits.to || newFrom !== boardLimits.from) {
             setBoardLimits({...boardLimits, from: newFrom, to: newTo });
             log(DEBUG_LEVELS.DEV, 'setting board limits from:' + newFrom + ' to:' + newTo);
@@ -2291,77 +2215,10 @@ function Blackboard(props) {
      */
     const saveShape = async(drawnShape, pointsData) => {
         if(!drawnShape.attrs) return Promise.reject('Shape attributes missing');
-        let reqBody = {
-            boardid: drawnShape.attrs.boardId,
-            visible: true,
-            starttime: drawnShape.attrs.startTime.toString(),
-            shapetype: drawnShape.attrs.name,
-            x: toRelativeCoords(drawnShape.attrs.x, stageSize.width).toString(),
-            y: toRelativeCoords(drawnShape.attrs.y, stageSize.height).toString(),
-            stroke: drawnShape.attrs.stroke,
-            fill: drawnShape.attrs.fill,
-            shapedetails: {
-                strokeWidth: pixelsToPct(drawnShape.attrs.strokeWidth, stageSize.width),
-                strokeEnabled: drawnShape.attrs.strokeEnabled,
-                fillEnabled: drawnShape.attrs.fillEnabled,
-                closed: drawnShape.attrs.closed,    
-            }
-        }
-        switch(drawnShape.attrs.name) {
-            case 'Line':
-            case 'Polyline':
-                reqBody.shapedetails['bezier'] = drawnShape.attrs.bezier;
-                reqBody.shapedetails['tension'] = Number(drawnShape.attrs.tension);
-                reqBody.shapedata = pointsData;
-                break;
-            case 'Arrow':
-                if(drawnShape.attrs.points.length === 4) {
-                    reqBody.shapedata = [[0,0,0],[0,pixelsToPct(drawnShape.attrs.points[2], stageSize.width),pixelsToPct(drawnShape.attrs.points[3], stageSize.height)]];
-                } else {
-                    // we probably have an arrow with only one point; maybe someone wants just an arrowhead...
-                    reqBody.shapedata = [[0,0,0],[0,0,0]];
-                }
-                break;
-            case 'Rect':
-                if((drawnShape.attrs.width !== 0) || (drawnShape.attrs.height !== 0)) {
-                    reqBody.shapedetails['width'] = pixelsToPct(drawnShape.attrs.width, stageSize.width);
-                    reqBody.shapedetails['height'] = pixelsToPct(drawnShape.attrs.height, stageSize.height);
-                } else {
-                    drawnShape.destroy();
-                    return Promise.reject('Rectangle requires a non-zero width or height');
-                }
-                break;
-            case 'Circle':
-            case 'Dot':
-                if(drawnShape.attrs.radius !== 0) {
-                    reqBody.shapedetails['radius'] = pixelsToPct(drawnShape.attrs.radius, stageSize.width);
-                } else {
-                    drawnShape.destroy();
-                    return Promise.reject('Circle requires a non-zero radius');
-                }
-                break;
-            case 'Ellipse':
-                if((drawnShape.attrs.radiusX !== 0) || (drawnShape.attrs.radiusY !== 0)) {
-                    reqBody.shapedetails['radiusX'] = pixelsToPct(drawnShape.attrs.radiusX, stageSize.width);
-                    reqBody.shapedetails['radiusY'] = pixelsToPct(drawnShape.attrs.radiusY, stageSize.height);
-                } else {
-                    drawnShape.destroy();
-                    return Promise.reject('Ellipse requires a non-zero X and Y radius');
-                }
-                break;
-            case 'Grid':
-                reqBody.shapedetails['hspacing'] = Number(pixelsToPct(drawnShape.attrs.hspacing, stageSize.width));
-                reqBody.shapedetails['vspacing'] = Number(pixelsToPct(drawnShape.attrs.vspacing, stageSize.height));
-                reqBody.shapedetails['width'] = pixelsToPct(drawnShape.attrs.width, stageSize.width);
-                reqBody.shapedetails['height'] = pixelsToPct(drawnShape.attrs.height, stageSize.height);
-                if (reqBody.shapedetails.width === 0 || reqBody.shapedetails.height === 0) {
-                    drawnShape.destroy();
-                    return Promise.reject('Grid needs to be at least one grid square in size');
-                }
-                break;
-            default:
-                drawnShape.destroy();
-                return Promise.reject('Unknown shape type');
+        const { requestBody: reqBody, error } = createShapeRequestBody(drawnShape.attrs, pointsData, stageSize);
+        if (error) {
+            drawnShape.destroy();
+            return Promise.reject(error);
         }
         try {
             const resp = await fetch(ENDPOINT + `/shape/` + props.sid, {
@@ -2398,12 +2255,7 @@ function Blackboard(props) {
      * @returns Promise
      */
     const cloneShape = async(clonedShape, dbId) => {
-        let reqBody = {
-            // Shape ids are bigint in the API (see CloneShape/BigInt in OpenAPI spec), so always serialize as string
-            shapeId: String(dbId),
-            x: toRelativeCoords(clonedShape.attrs.x, stageSize.width), 
-            y: toRelativeCoords(clonedShape.attrs.y, stageSize.height)
-        };
+        const reqBody = createShapeCloneRequestBody(clonedShape.attrs, dbId, stageSize);
 
         try {
             const resp = await fetch(ENDPOINT + `/cloneshape/` + props.sid, {
