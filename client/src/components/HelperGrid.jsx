@@ -35,7 +35,7 @@ const HelperGrid = (props) => {
             coords.push({x: w * props.gridBlockSize.x, y: 0});
         }
         setGridCoords(coords);
-    }, [props.gridBlockSize, props.gridProperties]);
+    }, [props.gridBlockSize, props.gridProperties, props.stageSize.width, props.stageSize.height]);
     
     return (
         <>
