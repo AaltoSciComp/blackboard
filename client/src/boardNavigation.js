@@ -27,6 +27,25 @@ export function getBoardNavigationTarget(where, currentBoard, numBoards, boardLi
     return { new: newBoard, changed: currentBoard === newBoard ? false : true };
 }
 
+export function getBoardLimitsForCurrentBoard(currentBoard, numBoards, boardLimits) {
+    let from = boardLimits.from;
+    let to = boardLimits.to;
+
+    if (currentBoard < from) {
+        from = currentBoard;
+        to = from + numBoards - 1;
+    } else if (currentBoard > to) {
+        to = Math.max(currentBoard, numBoards);
+        from = to - numBoards + 1;
+    }
+
+    return {
+        from,
+        to,
+        end: currentBoard > boardLimits.end ? currentBoard : boardLimits.end,
+    };
+}
+
 export function getBoardDirectionFromSwipe(swipeX, swipeY) {
     if (Math.abs(swipeX) > Math.abs(swipeY)) {
         if (swipeX > SWIPE_X_THRESHOLD) return 'previous';

@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { getBoardDirectionFromSwipe, getBoardNavigationTarget, getShapeHistoryActionFromSwipe } from './boardNavigation.js';
+import { getBoardDirectionFromSwipe, getBoardLimitsForCurrentBoard, getBoardNavigationTarget, getShapeHistoryActionFromSwipe } from './boardNavigation.js';
+
+describe('getBoardLimitsForCurrentBoard', () => {
+    it.each([
+        [2, { from: 4, to: 6, end: 8 }, { from: 2, to: 4, end: 8 }],
+        [8, { from: 4, to: 6, end: 8 }, { from: 6, to: 8, end: 8 }],
+        [5, { from: 4, to: 6, end: 8 }, { from: 4, to: 6, end: 8 }],
+        [11, { from: 4, to: 6, end: 8 }, { from: 9, to: 11, end: 11 }],
+    ])('updates the visible window for board %i', (currentBoard, limits, expected) => {
+        expect(getBoardLimitsForCurrentBoard(currentBoard, 3, limits)).toEqual(expected);
+    });
+});
 
 describe('getBoardNavigationTarget', () => {
     const boardLimits = { end: 8 };

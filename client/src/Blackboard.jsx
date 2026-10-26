@@ -50,12 +50,15 @@ import usePrevious from "./hooks/usePrevious.js";
 import { Circle } from 'react-konva';
 
 import { currentBoardAtom } from "./atoms.js";
-import { getBoardDirectionFromSwipe, getBoardNavigationTarget, getShapeHistoryActionFromSwipe } from "./boardNavigation.js";
+import { getBoardDirectionFromSwipe, getBoardLimitsForCurrentBoard, getBoardNavigationTarget, getShapeHistoryActionFromSwipe } from "./boardNavigation.js";
 import { getBoardGridWindow } from "./boardGridWindow.js";
 import { createShapeCloneRequestBody, createShapeRequestBody, createShapeTransformRequestBody, createShapeUpdateRequestBody } from "./shapeRequest.js";
 import { enqueueShapeDeletion, enqueueShapeRecolor, takeShapeDeletionBatch, takeShapeRecolorBatch } from "./shapeMutationQueue.js";
-import { getGridSnappedCoordinates } from "./gridSnapping.js";
+import { getGridBlockSize, getGridSnappedCoordinates } from "./gridSnapping.js";
 import { getSimpleModeUpdates } from "./uiMode.js";
+import { getToolSettingsUpdates } from "./toolSettings.js";
+import { getInitialBoardConfiguration } from "./initialBoardConfig.js";
+import { getSafeBoardSettings } from "./boardSettings.js";
 
 setUseWhatChange(process.env.NODE_ENV === 'development');
 
@@ -548,24 +551,9 @@ function Blackboard(props) {
     const handleShowSidebar = () => setShowSidebar(true);
 
     const handleToolChange = useCallback((newTool) => {
-        // If switching to Line tool, restore saved bezier preference (or default to true)
-        if(newTool.name === 'Line') {
-            const savedBezier = localStorage.getItem('lineSmoothing');
-            if (savedBezier !== null) {
-                setLineProperties({...lineProperties, bezier: savedBezier === 'true'});
-            } else {
-                // Default to true if no saved preference exists
-                setLineProperties({...lineProperties, bezier: true});
-            }
-        }
-        // If switching to polyline, switch beziers off (polylines don't support bezier)
-        if(newTool.name === 'Polyline') {
-            setLineProperties({...lineProperties, bezier: false});
-        }
-        // If switching to grid, switch snapping on by default
-        if(newTool.name === 'Grid') {
-            setBoardProperty('grid','snap', true);
-        }
+        const updates = getToolSettingsUpdates(newTool, lineProperties, localStorage.getItem('lineSmoothing'));
+        if(updates.lineProperties) setLineProperties(updates.lineProperties);
+        if(updates.snapToGrid) setBoardProperty('grid','snap', true);
         setCurrentTool(newTool);
     });
 
@@ -865,10 +853,7 @@ function Blackboard(props) {
     // For better performance, calculate grid block size in pixels only when needed
     // (when dimensions or grid settings change)
     useEffect(() => {
-        const xBlockSize = stageSize.width * boardSettings.settings.grid?.cellWidth * 0.01;
-        //const yBlockSize = boardSettings.settings.grid?.square ? xBlockSize : stageSize.height / boardSettings.settings.grid?.cellHeight;
-        const yBlockSize = stageSize.height * boardSettings.settings.grid?.cellHeight * 0.01;
-        gridBlockSize = {x: xBlockSize.toFixed(5), y: yBlockSize.toFixed(5)};
+        gridBlockSize = getGridBlockSize(stageSize, boardSettings.settings.grid);
         log(DEBUG_LEVELS.DEV, 'Updated grid block size to ' + gridBlockSize);
     }, [stageSize, boardSettings.settings?.grid?.cellWidth, boardSettings.settings?.grid?.cellHeight]);
 
@@ -921,24 +906,7 @@ function Blackboard(props) {
                     const json = await res.json();
                     // Check settings existence one by one as they may be new settings that are missing
                     // NOTE: nullish coalescing operator ?? counts false as not nullish, so it is used for booleans
-                    const safeSettings = {
-                        bg: {
-                            visible: json.settings.settings.bg?.visible ?? DEF_BOARD.settings.bg.visible,
-                            url: json.settings.settings.bg?.url ?? DEF_BOARD.settings.bg.url,
-                        },
-                        grid: {
-                            visible: json.settings.settings.grid?.visible ?? DEF_BOARD.settings.grid.visible,
-                            stroke: json.settings.settings.grid?.stroke ?? DEF_BOARD.settings.grid.stroke,
-                            strokeWidth: json.settings.settings.grid?.strokeWidth ?? DEF_BOARD.settings.grid.strokeWidth,
-                            opacity: json.settings.settings.grid?.opacity ?? DEF_BOARD.settings.grid.opacity,
-                            cellWidth: json.settings.settings.grid?.cellWidth ?? DEF_BOARD.settings.grid.cellWidth,
-                            cellHeight: json.settings.settings.grid?.cellHeight ?? DEF_BOARD.settings.grid.cellHeight,
-                            square: json.settings.settings.grid?.square ?? DEF_BOARD.settings.grid.square,
-                            snap: json.settings.settings.grid?.snap ?? DEF_BOARD.settings.grid.snap,
-                            present: json.settings.settings.grid?.present ?? DEF_BOARD.settings.grid.present,
-                            aspect: json.settings.settings.grid?.aspect ?? DEF_BOARD.settings.grid.aspect
-                        }
-                    }
+                    const safeSettings = getSafeBoardSettings(json.settings.settings);
                     //console.info('boardsettings:',{...boardSettings, color: json.settings.color, settings: safeSettings});
                     //console.info('currentBoard: ', currentBoard, 'board limits: ', boardLimits);
                     layer.destroyChildren();
@@ -954,24 +922,13 @@ function Blackboard(props) {
                      * (we should keep this similar to the one in grid view)
                      */
                     if (currentBoard > 0) {
-                        let newFrom = boardLimits.from;
-                        let newTo = boardLimits.to;
-                        if(currentBoard < newFrom) {
-                            newFrom = currentBoard;
-                            newTo = newFrom + numBoards - 1;
-                        } else {
-                            if(currentBoard > newTo) {
-                                newTo = Math.max(currentBoard, numBoards);
-                                newFrom = newTo - numBoards + 1;
-                            }
-                        }
-                        const newEnd = (currentBoard > boardLimits.end) ? currentBoard : boardLimits.end;
-                        if (newTo !== boardLimits.to || newFrom !== boardLimits.from || newEnd !== boardLimits.end) {
-                            log(DEBUG_LEVELS.DEV, 'Setting board limits: from:' + newFrom + ', to:' + newTo + ', end:' + newEnd);
-                            setBoardLimits({ from: newFrom, to: newTo, end: newEnd });
+                        const newLimits = getBoardLimitsForCurrentBoard(currentBoard, numBoards, boardLimits);
+                        if (newLimits.to !== boardLimits.to || newLimits.from !== boardLimits.from || newLimits.end !== boardLimits.end) {
+                            log(DEBUG_LEVELS.DEV, 'Setting board limits: from:' + newLimits.from + ', to:' + newLimits.to + ', end:' + newLimits.end);
+                            setBoardLimits(newLimits);
                         }
                         if (socket) {
-                            socket.emit('set_active_board', {sid: props.sid, boardId: currentBoard, startId: newFrom, token: getPresenterToken(props.sid)});
+                            socket.emit('set_active_board', {sid: props.sid, boardId: currentBoard, startId: newLimits.from, token: getPresenterToken(props.sid)});
                         } else {
                             log(DEBUG_LEVELS.ERROR, 'Socket is not initialized.');
                         }
@@ -1131,51 +1088,35 @@ function Blackboard(props) {
                 const json = await resp.json();
     
                 //log(DEBUG_LEVELS.DEV, json, false);
-                const numboards = parseInt(json.boards.nvb);
-                const activeid = parseInt(json.boards.ab);
-                const startid = parseInt(json.boards.sb);
-
-                let lastid = 1;
-                let uniquecolors = [];
+                const boardConfig = getInitialBoardConfiguration(json.boards, json.settings);
                 json.settings.forEach(row => {
                     const bid = parseInt(row.boardid);
-                    // Gather all unique board colors into an array
-                    if(!uniquecolors.includes(row.color)) uniquecolors.push(row.color);
-                    // Keep track of the largest board id
-                    if(bid > lastid) lastid = bid;
                     // Initialize bgProps where we keep cached background images
                     bgProps[parseInt(row.boardid)] = {url: row.settings.bg?.url};
                     // Pre-load all existing images in the presentation (async)
                     if(row.settings.bg?.url) updateBgImage(row.settings.bg.url, bid);
                 })
                 // Sync initial teacher settings with ones at the server (if any)
-                if(numboards > 0 && numboards !== DEF_UI.boards.nvb) setNumBoards(numboards);
+                if(boardConfig.numBoards > 0 && boardConfig.numBoards !== DEF_UI.boards.nvb) setNumBoards(boardConfig.numBoards);
                 // NOTE: atm, setting the board limits starts the canvas events recreation loop on changes
-                const newTo = startid + numboards - 1;
-                const newEnd = (lastid > 0) ? lastid : 1;
+                setBoardLimits(boardConfig.boardLimits);
+                log(DEBUG_LEVELS.DEV, 'initialSetup: setting board limits - from:' + boardConfig.startBoard + ', to:' + boardConfig.boardLimits.to + ', end:' + boardConfig.boardLimits.end);
 
-                setBoardLimits( { 
-                    from: startid,
-                    to: newTo,
-                    end: newEnd}
-                );
-                log(DEBUG_LEVELS.DEV, 'initialSetup: setting board limits - from:' + startid + ', to:' + newTo + ', end:' + newEnd);
-
-                if(activeid > 1) {
+                if(boardConfig.activeBoard > 1) {
                     /**
                      * TODO: we need to repeat code here, since we can't simply use changeBoard. If we do, the function
                      * will overwrite boardLimits.from as it is using the old value for numBoards, and figures it can be
                      * only DEF_UI.boards.nvb smaller than the current board number. All this is due to React state updates not
                      * being synchronous (immediate).
                      */
-                    setCurrentBoard(activeid);
-                    log(DEBUG_LEVELS.DEV, 'initialSetup: setting active board to ' + activeid);
-                    socket.emit('set_active_board', {sid: props.sid, boardId: activeid, startId: activeid, token: getPresenterToken(props.sid)});
+                    setCurrentBoard(boardConfig.activeBoard);
+                    log(DEBUG_LEVELS.DEV, 'initialSetup: setting active board to ' + boardConfig.activeBoard);
+                    socket.emit('set_active_board', {sid: props.sid, boardId: boardConfig.activeBoard, startId: boardConfig.activeBoard, token: getPresenterToken(props.sid)});
                     try {
                         const layer = mainLayer.current;
                         layer.destroyChildren();
                         layer.batchDraw();
-                        const resp = await fetch(ENDPOINT + `/board/` + props.sid + `/` + activeid, {
+                        const resp = await fetch(ENDPOINT + `/board/` + props.sid + `/` + boardConfig.activeBoard, {
                             method: 'GET',
                             headers: {
                                 'Accept': 'application/json, text/plain, */*',
@@ -1190,7 +1131,7 @@ function Blackboard(props) {
                                 playShapes(socket, json.shapes, { skipPenUps: 1, drawAsap: 1 })
                             }
                         } else {
-                            log(DEBUG_LEVELS.ERROR, 'Error fetching data of board ' + activeid);
+                            log(DEBUG_LEVELS.ERROR, 'Error fetching data of board ' + boardConfig.activeBoard);
                             return Promise.reject('Error (' + resp.status + ') occurred')
                         }
                     } catch (err) {
