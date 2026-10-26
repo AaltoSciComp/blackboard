@@ -20,3 +20,48 @@ export function getSafeBoardSettings(settings) {
         },
     };
 }
+
+export function getBoardPropertyUpdate(boardSettings, object, property, value, stageSize) {
+    switch (object) {
+        case 'grid': {
+            const grid = boardSettings.settings.grid;
+            let updatedGrid;
+            let pending = false;
+
+            if (grid.square && grid.aspect && (property === 'cellHeight' || property === 'cellWidth')) {
+                if (property === 'cellWidth') {
+                    const cellHeight = Math.max(Math.round(stageSize.width * value / stageSize.height), 1);
+                    updatedGrid = { ...grid, cellWidth: value, cellHeight };
+                } else {
+                    const cellWidth = Math.max(Math.round(stageSize.height * value / stageSize.width), 0.5);
+                    updatedGrid = { ...grid, cellHeight: value, cellWidth };
+                }
+            } else {
+                updatedGrid = { ...grid, [property]: value };
+                pending = property === 'visible' || property === 'aspect';
+            }
+
+            return {
+                boardSettings: {
+                    ...boardSettings,
+                    settings: { ...boardSettings.settings, grid: updatedGrid },
+                },
+                pending,
+            };
+        }
+        case 'bg': {
+            const bg = property === 'url' && value === ''
+                ? { url: '', visible: false }
+                : { ...boardSettings.settings.bg, [property]: value };
+            return {
+                boardSettings: {
+                    ...boardSettings,
+                    settings: { ...boardSettings.settings, bg },
+                },
+                pending: true,
+            };
+        }
+        default:
+            return null;
+    }
+}

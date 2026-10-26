@@ -54,11 +54,13 @@ import { getBoardDirectionFromSwipe, getBoardLimitsForCurrentBoard, getBoardNavi
 import { getBoardGridWindow } from "./boardGridWindow.js";
 import { createShapeCloneRequestBody, createShapeRequestBody, createShapeTransformRequestBody, createShapeUpdateRequestBody } from "./shapeRequest.js";
 import { enqueueShapeDeletion, enqueueShapeRecolor, takeShapeDeletionBatch, takeShapeRecolorBatch } from "./shapeMutationQueue.js";
-import { getGridBlockSize, getGridSnappedCoordinates } from "./gridSnapping.js";
+import { getEllipseSnapOffset, getGridBlockSize, getGridSnappedCoordinates, getSnappedAnchorPosition } from "./gridSnapping.js";
 import { getSimpleModeUpdates } from "./uiMode.js";
 import { getToolSettingsUpdates } from "./toolSettings.js";
 import { getInitialBoardConfiguration } from "./initialBoardConfig.js";
-import { getSafeBoardSettings } from "./boardSettings.js";
+import { getBoardPropertyUpdate, getSafeBoardSettings } from "./boardSettings.js";
+import { getClosestPointIndexWithinRadius, getPolylinePenUpAction, shouldRecordDrawingPoint } from "./drawingPoints.js";
+import { createSessionSettings } from "./sessionSettings.js";
 
 setUseWhatChange(process.env.NODE_ENV === 'development');
 
@@ -232,41 +234,13 @@ function Blackboard(props) {
     // Helper func for board properties menu; handle changing one setting at a time inside the objects
     const setBoardProperty = useCallback((obj, prop, value) => {
         //setUiOptions({...ui, grid: {...boardSettings.settings.grid, [`${prop}`]: value}})
-        switch(obj) {
-            case 'grid':
-                // If square option is set, try to keep the grid square in the current aspect ratio
-                if(boardSettings.settings.grid.square && boardSettings.settings.grid.aspect && (prop === 'cellHeight' || prop === 'cellWidth')) {
-                    let sizeIn100Pixels;
-                    if(prop === 'cellWidth') {
-                        sizeIn100Pixels = stageSize.width * value;
-                        let bestHeightMatch = Math.max(Math.round(sizeIn100Pixels / stageSize.height), 1);
-                        setBoardSettings({...boardSettings, settings: {...boardSettings.settings, grid: {...boardSettings.settings.grid, cellWidth: value, cellHeight: bestHeightMatch}}})
-                    } else {
-                        if(prop === 'cellHeight') {
-                            sizeIn100Pixels = stageSize.height * value;
-                            let bestWidthMatch = Math.max(Math.round(sizeIn100Pixels / stageSize.width), 0.5);
-                            setBoardSettings({...boardSettings, settings: {...boardSettings.settings, grid: {...boardSettings.settings.grid, cellHeight: value, cellWidth: bestWidthMatch}}})
-                        }
-                    }
-                } else {
-                    setBoardSettings({...boardSettings, settings: {...boardSettings.settings, grid: {...boardSettings.settings.grid, [`${prop}`]: value}}})
-                    if(prop === 'visible' || prop === 'aspect') {
-                        setBoardSettingsPending(true); // Kludge to update grid visibility or screen aspect ratio
-                    }
-                }
-                break;
-            case 'bg':
-                if(prop === 'url' && value === '') {
-                    // If url is empty, let's set the visibility to false as well
-                    setBoardSettings({...boardSettings, settings: {...boardSettings.settings, bg: {url: '', visible: false}}})
-                } else setBoardSettings({...boardSettings, settings: {...boardSettings.settings, bg: {...boardSettings.settings.bg, [`${prop}`]: value}}})
-                // TODO: why can't the background image settings be saved like the others when changing on menu?
-                setBoardSettingsPending(true); // Kludge to update grid visibility or screen aspect ratio
-                break;
-            default:
-                log(DEBUG_LEVELS.DEBUG, 'setBoardProperty: Unknown settings object.');
-                break;
+        const update = getBoardPropertyUpdate(boardSettings, obj, prop, value, stageSize);
+        if (!update) {
+            log(DEBUG_LEVELS.DEBUG, 'setBoardProperty: Unknown settings object.');
+            return;
         }
+        setBoardSettings(update.boardSettings);
+        if (update.pending) setBoardSettingsPending(true); // Kludge to update grid visibility or screen aspect ratio
     },[boardSettings]);
 
     /**
@@ -348,24 +322,9 @@ function Blackboard(props) {
 
                 // If snap is on, we constrain drag movement to grid
                 if(boardSettings.settings.grid.snap) {
-                    let addX = 0;
-                    let addY = 0;
-                    /**
-                     * Shapes with coordinates at center need special treatment
-                     * Essentially we check if the shape is symmetric relative to gridline crossing or not
-                     * and if not, we add half a grid block to the center point coordinate in that (x/y) direction.
-                     * The multipliers 0.1 and 0.9 allow snapping even if the object size does not quite 
-                     * match the grid size.
-                     */ 
+                    let snapOffset = { x: 0, y: 0 };
                     if(cloneObj.attrs.name === 'Ellipse') {
-                        const modX = Math.abs(cloneObj.width()) * 0.5 % gridBlockSize.x;
-                        const modY = Math.abs(cloneObj.height()) * 0.5 % gridBlockSize.y;
-                        if(modX > (0.1 * gridBlockSize.x) && modX < (0.9 * gridBlockSize.x)) {
-                            addX = gridBlockSize.x * 0.5;
-                        }
-                        if(modY > (0.1 * gridBlockSize.y) && modY < (0.9 * gridBlockSize.y)) {
-                            addY += gridBlockSize.y * 0.5;
-                        }
+                        snapOffset = getEllipseSnapOffset(cloneObj.width(), cloneObj.height(), gridBlockSize);
                     }
                     cloneObj.on('dragmove', function () {
                         //console.info('coords: ',contextMenu.target.absolutePosition());
@@ -373,8 +332,8 @@ function Blackboard(props) {
                         let newX, newY;
                         [newX, newY] = getSnappedCoordinates(loc.x, loc.y);
                         cloneObj.absolutePosition({
-                            x: newX + addX,
-                            y: newY + addY
+                            x: newX + snapOffset.x,
+                            y: newY + snapOffset.y
                         });
                     })
                 }
@@ -1422,32 +1381,17 @@ function Blackboard(props) {
 
                     // If snap is on, we constrain drag movement to grid
                     if(boardSettings.settings.grid.snap) {
-                        let addX = 0;
-                        let addY = 0;
-                        /**
-                         * Shapes with coordinates at center need special treatment
-                         * Essentially we check if the shape is symmetric relative to gridline crossing or not
-                         * and if not, we add half a grid block to the center point coordinate in that (x/y) direction.
-                         * The multipliers 0.1 and 0.9 allow snapping even if the object size does not quite 
-                         * match the grid size.
-                         */ 
+                        let snapOffset = { x: 0, y: 0 };
                         if(e.target.attrs.name === 'Ellipse') {
-                            const modX = Math.abs(e.target.width()) * 0.5 % gridBlockSize.x;
-                            const modY = Math.abs(e.target.height()) * 0.5 % gridBlockSize.y;
-                            if(modX > (0.1 * gridBlockSize.x) && modX < (0.9 * gridBlockSize.x)) {
-                                addX = gridBlockSize.x * 0.5;
-                            }
-                            if(modY > (0.1 * gridBlockSize.y) && modY < (0.9 * gridBlockSize.y)) {
-                                addY += gridBlockSize.y * 0.5;
-                            }
+                            snapOffset = getEllipseSnapOffset(e.target.width(), e.target.height(), gridBlockSize);
                         }
                         e.target.on('dragmove', function () {
                             const loc = stageEl.current.getPointerPosition();//contextMenu.target.absolutePosition();
                             let newX, newY;
                             [newX, newY] = getSnappedCoordinates(loc.x, loc.y);
                             e.target.absolutePosition({
-                                x: newX + addX,
-                                y: newY + addY
+                                x: newX + snapOffset.x,
+                                y: newY + snapOffset.y
                             });
                         })
                     }
@@ -1469,34 +1413,7 @@ function Blackboard(props) {
                               return newPos;
                             }
 
-                            const closestX = Math.round(newPos.x / gridBlockSize.x) * gridBlockSize.x;
-                            const diffX = Math.abs(newPos.x - closestX);
-
-                            const closestY = Math.round(newPos.y / gridBlockSize.y) * gridBlockSize.y;
-                            const diffY = Math.abs(newPos.y - closestY);
-                  
-                            const snappedX = diffX < 10;
-                            const snappedY = diffY < 10;
-
-                            // a bit different snap strategies based on snap direction
-                            // we need to reuse old position for better UX
-                            if (snappedX && !snappedY) {
-                              return {
-                                x: closestX,
-                                y: oldPos.y,
-                              };
-                            } else if (snappedY && !snappedX) {
-                              return {
-                                x: oldPos.x,
-                                y: closestY,
-                              };
-                            } else if (snappedX && snappedY) {
-                              return {
-                                x: closestX,
-                                y: closestY,
-                              };
-                            }
-                            return newPos;
+                            return getSnappedAnchorPosition(oldPos, newPos, gridBlockSize);
                         }
                     };
 
@@ -1977,12 +1894,7 @@ function Blackboard(props) {
         }
         try {
         // settings is a different parameter, gathered from several variables
-            const settings = {
-                boards: {ab: currentBoard, sb: boardLimits.from, nvb: numBoards},
-                ui: ui,
-                line: lineProperties,
-                laser: laserProperties
-            }
+            const settings = createSessionSettings(currentBoard, boardLimits, numBoards, ui, lineProperties, laserProperties);
             const response = await handleSettingsChange({settings: settings});
             return response;
         } catch (error) {
@@ -2551,8 +2463,7 @@ function Blackboard(props) {
                 const newScaledY = toRelativeCoords(pointY, stageSize.height);
                 const previous = drawingData.length - 1;
                 if(drawingData[previous] !== undefined) {
-                    const dist = pointsDistance(drawingData[previous][1], drawingData[previous][2], newScaledX, newScaledY);
-                    if(pointTime - drawingData[previous][0] >= lineProperties.pointsThresholdMs && dist > lineProperties.distThreshold) {
+                    if(shouldRecordDrawingPoint(drawingData[previous], pointTime, newScaledX, newScaledY, lineProperties.pointsThresholdMs, lineProperties.distThreshold)) {
                         //console.log(dist + ' (' + drawingData[previous][1] + ',' + drawingData[previous][2] + '), (' + newScaledX + ',' + newScaledY + ')');
                         drawingData.push([pointTime, newScaledX, newScaledY]); // DB line we save and show for viewers
                         const dLen = drawingData.length;
@@ -2793,20 +2704,10 @@ function Blackboard(props) {
 
                 if(circles && circles.length > 0) {
                     // Find the closest circle within snap range
-                    let closestCircle = null;
-                    let minDist = Infinity;
                     const snapRadius = stageSize.width * 0.007 * 1.2; // Slightly larger than base for easier snapping
-
-                    for(const circle of circles) {
-                        const circleX = circle.x();
-                        const circleY = circle.y();
-                        const dist = Math.sqrt(Math.pow(clickX - circleX, 2) + Math.pow(clickY - circleY, 2));
-
-                        if(dist < snapRadius && dist < minDist) {
-                            minDist = dist;
-                            closestCircle = circle;
-                        }
-                    }
+                    const circlePositions = circles.map(circle => ({x: circle.x(), y: circle.y()}));
+                    const closestIndex = getClosestPointIndexWithinRadius(circlePositions, clickX, clickY, snapRadius);
+                    const closestCircle = closestIndex >= 0 ? circles[closestIndex] : null;
 
                     log(DEBUG_LEVELS.DEV, 'penUp: finished circle loop, closestCircle=' + (closestCircle ? 'found' : 'null'), true);
 
@@ -2863,31 +2764,30 @@ function Blackboard(props) {
 
             log(DEBUG_LEVELS.DEV, 'penUp: dist=' + dist + ', distanceThreshold=' + distanceThreshold + ', openPolyLine.finished=' + openPolyLine.finished, true);
 
-            // If distance from previous point is not enough, and line is not finished, undo the last point
-            if(dist < distanceThreshold && !openPolyLine.finished) {
-                if(len > (drawingData.length * 2)) {
+            const penUpAction = getPolylinePenUpAction(dist, distanceThreshold, openPolyLine.finished, len, drawingData.length);
+
+            if(penUpAction.action === 'discard') {
+                if(penUpAction.removeLastPoint) {
                     let previousPoints = newPoints.slice(0, -2);
                     drawnShape.points(previousPoints); // no need to update len as we return after this
                 }
                 return;
             }
 
-            if (dist >= distanceThreshold && !openPolyLine.finished) {
+            if (penUpAction.action === 'intermediate') {
                 // The point coordinates are relative to the starting point of the Polyline
                 // so we need to add the starting point coordinates to the relative ones
                 emphasizePoint(lastX + drawnShape.x(), lastY + drawnShape.y(), true, true, false);
                 log(DEBUG_LEVELS.DEV, 'Created intermediate point for polyline, length = ' + len / 2, true);
-            } else if (openPolyLine.finished) {
+            } else if (penUpAction.action === 'finish') {
                 // If we are at third point at least (each point is 2 coordinates), it's ok to finish the polyline
-                if (len > 4) {
-                    log(DEBUG_LEVELS.DEV, 'Polyline finished.', true);
-                } else {
-                    // We have only one previous point in the polyline and snapped to it
-                    // so issue a warning and remove the polyline (just one point)
-                    resetPolyline();
-                    log(DEBUG_LEVELS.INFO, 'Polyline needs at least two distinct points.', true);
-                    return;
-                }
+                log(DEBUG_LEVELS.DEV, 'Polyline finished.', true);
+            } else if (penUpAction.action === 'too-short') {
+                // We have only one previous point in the polyline and snapped to it
+                // so issue a warning and remove the polyline (just one point)
+                resetPolyline();
+                log(DEBUG_LEVELS.INFO, 'Polyline needs at least two distinct points.', true);
+                return;
             }
 
             // Proceed to create the new point in database

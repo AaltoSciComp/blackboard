@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SQRT2_DIV2 } from './constants.js';
-import { getGridBlockSize, getGridSnappedCoordinates } from './gridSnapping.js';
+import { getEllipseSnapOffset, getGridBlockSize, getGridSnappedCoordinates, getSnappedAnchorPosition } from './gridSnapping.js';
 
 describe('getGridBlockSize', () => {
     it('calculates horizontal and vertical grid spacing independently', () => {
@@ -35,5 +35,41 @@ describe('getGridSnappedCoordinates', () => {
             Math.round(12 / (10 * SQRT2_DIV2)) * (10 * SQRT2_DIV2),
             Math.round(22 / (20 * SQRT2_DIV2)) * (20 * SQRT2_DIV2),
         ]);
+    });
+});
+
+describe('getSnappedAnchorPosition', () => {
+    const gridBlockSize = { x: 100, y: 80 };
+    const oldPosition = { x: 15, y: 16 };
+
+    it.each([
+        [{ x: 104, y: 17 }, { x: 100, y: 16 }],
+        [{ x: 14, y: 79 }, { x: 15, y: 80 }],
+        [{ x: 104, y: 79 }, { x: 100, y: 80 }],
+        [{ x: 30, y: 35 }, { x: 30, y: 35 }],
+    ])('constrains proposed anchor position %j to %j', (newPosition, expected) => {
+        expect(getSnappedAnchorPosition(oldPosition, newPosition, gridBlockSize)).toEqual(expected);
+    });
+
+    it('does not snap when the distance equals the tolerance', () => {
+        expect(getSnappedAnchorPosition(oldPosition, { x: 90, y: 16 }, gridBlockSize)).toEqual({ x: 90, y: 16 });
+    });
+});
+
+describe('getEllipseSnapOffset', () => {
+    const gridBlockSize = { x: 100, y: 80 };
+
+    it('offsets center-based ellipse coordinates when half dimensions are off grid', () => {
+        expect(getEllipseSnapOffset(40, 40, gridBlockSize)).toEqual({ x: 50, y: 40 });
+    });
+
+    it('does not offset dimensions aligned with grid lines or at strict thresholds', () => {
+        expect(getEllipseSnapOffset(200, 160, gridBlockSize)).toEqual({ x: 0, y: 0 });
+        expect(getEllipseSnapOffset(20, 16, gridBlockSize)).toEqual({ x: 0, y: 0 });
+        expect(getEllipseSnapOffset(180, 144, gridBlockSize)).toEqual({ x: 0, y: 0 });
+    });
+
+    it('uses absolute dimensions', () => {
+        expect(getEllipseSnapOffset(-40, -40, gridBlockSize)).toEqual({ x: 50, y: 40 });
     });
 });
