@@ -1,4 +1,5 @@
-import { HIT_STROKE_WIDTH, ENDPOINT } from "./constants.js"
+import { DEBUG_LEVELS, ENDPOINT, HIT_STROKE_WIDTH } from "./constants.js";
+import { log } from "./logging.js";
 
 
 /**
