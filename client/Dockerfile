@@ -25,12 +25,10 @@ RUN npm install
 
 COPY . ./
 
-# Copy external libraries from node_modules to public/js for the viewer to use
-RUN mkdir -p public/js && \
-    cp node_modules/konva/konva.min.js public/js/ && \
-    cp node_modules/socket.io-client/dist/socket.io.min.js public/js/ && \
-    cp node_modules/toastify-js/src/toastify.js public/js/ && \
-    cp node_modules/lz-string/libs/lz-string.min.js public/js/
+# NOTE: The viewer page (viewer.html + src/viewer/*) used to load Konva,
+# socket.io-client, Toastify and LZString as plain script tags copied into
+# public/js. It is now bundled by Vite from node_modules like the presenter
+# app, so no manual library copies are needed anymore.
 
 RUN if [ $USE_NGINX = "true" ] ; then npm run build ; fi
 

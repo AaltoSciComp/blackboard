@@ -16,5 +16,14 @@ export default defineConfig({
   },
   build: {
     outDir: 'build',
+    rollupOptions: {
+      input: {
+        // React presenter app (and SPA fallback pages)
+        main: './index.html',
+        // Plain-JavaScript presentation viewer (Konva + socket.io, no React).
+        // Shares its pure logic with the presenter app via src/viewer/*.
+        viewer: './viewer.html',
+      },
+    },
   } 
 })

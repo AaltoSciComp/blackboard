@@ -1,0 +1,209 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <title>Blackboard viewer</title>
+    <style>
+        body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: gray;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+            'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+            sans-serif;
+        }
+        #controlbox p {
+            color: #fff;
+            font-weight: 400;
+        }
+        #controlbox .hidden {
+            display:none;
+        }
+        #stage-parent {
+            height: 100%;
+            width: 100%;
+        }
+        #fstoggle, #offlinetoggle {
+            display: block;
+            width: 100%;
+            margin: 1rem 0 0 0;
+        }
+        #controlbox {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            -webkit-transform: translateX(-50%);
+            -moz-transform: translateX(-50%);
+            transform: translateX(-50%);
+            padding: 0 1rem 0 1rem;
+            border-radius: 8px;
+            background-color: rgba(47,79,79,0.7);
+            transition: opacity 0.6s ease-out;
+            text-align: center;
+        }
+        #controlbox.inactive {
+            opacity: 0;
+        }
+        button {
+            outline: none;
+            cursor: pointer;
+            color: #fff;
+            background-color: #0d6efd;
+            display: inline-block;
+            font-weight: 400;
+            line-height: 1.5;
+            text-align: center;
+            text-decoration: none;
+            vertical-align: middle;
+            cursor: pointer;
+            -webkit-user-select: none;
+            user-select: none;
+            border: 1px solid transparent;
+            padding: 0.375rem 0.75rem;
+            font-size: 1rem;
+            border-radius: 0.25rem;
+            transition: color .15s ease-in-out,background-color .15s ease-in-out,border-color .15s ease-in-out,box-shadow .15s ease-in-out;
+        }
+        button:hover {
+            background-color: #0b5ed7;
+        }
+        button.readonly {
+            background-color: grey;
+            cursor: default;
+        }
+
+/*!
+ * Toastify js 1.12.0 (modified)
+ * https://github.com/apvarun/toastify-js
+ * @license MIT licensed
+ *
+ * Copyright (C) 2018 Varun A P
+ */
+
+.toastify {
+    padding: 12px 20px;
+    color: #ffffff;
+    display: inline-block;
+    box-shadow: 0 3px 6px -1px rgba(0, 0, 0, 0.12), 0 10px 36px -4px rgba(77, 96, 232, 0.3);
+    background: green;/*-webkit-linear-gradient(315deg, #73a5ff, #5477f5);
+    background: linear-gradient(135deg, #73a5ff, #5477f5);*/
+    position: fixed;
+    opacity: 0;
+    transition: all 0.4s cubic-bezier(0.215, 0.61, 0.355, 1);
+    border-radius: 2px;
+    cursor: pointer;
+    text-decoration: none;
+    max-width: calc(50% - 20px);
+    z-index: 2147483647;
+}
+
+.toastify-error {
+    background-color: red;
+}
+
+.toastify.on {
+    opacity: 1;
+}
+
+.toast-close {
+    background: transparent;
+    border: 0;
+    color: white;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 1em;
+    opacity: 0.4;
+    padding: 0 5px;
+}
+
+.toastify-right {
+    right: 15px;
+}
+
+.toastify-left {
+    left: 15px;
+}
+
+.toastify-top {
+    top: -150px;
+}
+
+.toastify-bottom {
+    bottom: -150px;
+}
+
+.toastify-rounded {
+    border-radius: 25px;
+}
+
+.toastify-avatar {
+    width: 1.5em;
+    height: 1.5em;
+    margin: -7px 5px;
+    border-radius: 2px;
+}
+
+.toastify-center {
+    margin-left: auto;
+    margin-right: auto;
+    left: 0;
+    right: 0;
+    max-width: fit-content;
+    max-width: -moz-fit-content;
+}
+
+@media only screen and (max-width: 360px) {
+    .toastify-right, .toastify-left {
+        margin-left: auto;
+        margin-right: auto;
+        left: 0;
+        right: 0;
+        max-width: fit-content;
+    }
+}
+
+    </style>
+</head>
+
+<body>
+    <div id="stage-parent" height="100vh" style="overflow: hidden">
+        <div id="helperdiv"></div>
+    </div>
+    <div id="highlight-parent" height="100vh" style="overflow: hidden">
+    </div>
+    <div id="controlbox">
+        <button id="offlinetoggle">Go offline</button>
+        <div id="navcontrols" class="hidden">
+            <p>Navigate boards</p>
+            <button id="go_previous">&lt;</button>
+            <button id="boardnumber"></button>
+            <button id="go_next">&gt;</button>
+            <p><small>(or use arrow keys on keyboard)</small></p>
+        </div>
+        <div id="offsetcontrols">
+            <p>Adjust offset</p>
+            <button id="offset_decrease">-</button>
+            <button class="readonly" id="offset">0</button>
+            <button id="offset_increase">+</button>
+            <p><button id="offset_reset">Reset</button></p>
+            <p><small>(in "pages" of visible boards)</small></p>
+        </div>
+        <p><button id="fstoggle">Toggle fullscreen</button></p>
+        <p><button id="gohome">Back to main page</button></p>
+    </div>
+    <!--
+        The viewer is a plain JavaScript page (Konva + socket.io, no React)
+        whose shared logic lives in ESM modules under src/ so the same code
+        is used by (and unit tested together with) the presenter app.
+        Vite bundles this HTML as a second entry point alongside index.html,
+        and in development serves it directly from the dev server.
+        Konva, socket.io-client, Toastify and LZString are imported by
+        src/viewer/viewer.js and no longer need script tags.
+    -->
+    <script type="module" src="/src/viewer/viewer.js"></script>
+</body>
+
+</html>
