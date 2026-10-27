@@ -57,6 +57,11 @@ npm install
 npx playwright install chromium
 npm run test:e2e
 ```
+If you want to visually confirm what happens during testing, replace the last command with:
+```
+npm run test:e2e -- --headed
+```
+
 The test stack uses port 8080 for the backend and removes its database volume after the run. It does not use the regular development database volume.
 
 For more about how to use the system, see the documentation under /docs (TODO: Add the link to actual documentation location in GitHub here).
