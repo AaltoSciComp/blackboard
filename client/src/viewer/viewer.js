@@ -644,9 +644,17 @@ async function drawShape(shape, target, localBusyDrawingNonce, options) {
             if (shape.shapedata && shape.shapetype !== 'Arrow') {
                 let linePoints = []; // Helper array into which we push coordinates instead of concat for better performance
                 for (const point of shape.shapedata) {
+                    // Push in place: points().concat() allocated a fresh array
+                    // per point (O(n^2) copies over a long line)
+                    linePoints.push(point[1] * layerWidth, point[2] * layerHeight);
                     if (!options.drawAsap) {
-                        let newPoints = thisShape.points().concat(point[1] * layerWidth, point[2] * layerHeight);
-                        thisShape.points(newPoints);
+                        // The points() setter schedules a full layer batchDraw
+                        // via Konva auto-draw (clear + repaint), so the growing
+                        // line is repainted cleanly every frame. Do NOT also
+                        // call thisShape.draw() here: it would paint a second
+                        // time per point without clearing (bold-line bug) and
+                        // triple the per-point CPU work.
+                        thisShape.points(linePoints);
                         const currentTime = Date.now();
                         const currentPointTimeOffset = parseInt(point[0]);
                         const pointWaitTime = functionCallTime + currentPointTimeOffset - currentTime;
@@ -654,17 +662,12 @@ async function drawShape(shape, target, localBusyDrawingNonce, options) {
                             await sleep(pointWaitTime - 2);
                         }
                         if (localBusyDrawingNonce !== globalBusyDrawingNonce) { return { error: true, reason: 'interrupted' }; }
-                        thisShape.draw();
-                    } else {
-                        // If drawing asap, just push the new points to temp array and move on
-                        linePoints.push(point[1] * layerWidth, point[2] * layerHeight);
                     }
                 }
                 if (options.drawAsap) {
                     // Use our temp array to update all points of the line in one go
                     thisShape.points(linePoints);
                 }
-                thisShape.draw();
             }
         }
     }
@@ -1210,6 +1213,7 @@ window.viewerDebug = {
     layer,
     stage,
     boardCache,
+    socket,
     get from() { return from; },
     get to() { return to; },
     get activeBoard() { return activeBoard; },

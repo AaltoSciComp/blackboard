@@ -3290,25 +3290,31 @@ function Blackboard(props) {
                         if(shape.shapetype !== 'Arrow' && shape.shapedata && thisShape.points) {
                             let linePoints = []; // Helper array into which we push coordinates instead of concat for better performance
                             for (const point of shape.shapedata) {
+                                // Push to the shared array in place: points().concat()
+                                // allocated a fresh array per point (O(n^2) copies over a line)
+                                linePoints.push(Math.round(point[1] * layerWidth), Math.round(point[2] * layerHeight));
                                 if (!options.drawAsap) {
-                                    let newPoints = thisShape.points().concat(Math.round(point[1] * layerWidth), Math.round(point[2] * layerHeight));
-                                    thisShape.points(newPoints);
+                                    // The points() setter schedules a full layer
+                                    // batchDraw via Konva auto-draw, so the growing
+                                    // line is repainted (cleared + redrawn) every
+                                    // frame. Do NOT also call thisShape.draw() here:
+                                    // it paints a second time per point without
+                                    // clearing, tripling the per-point CPU work.
+                                    thisShape.points(linePoints);
                                     let currentTime = Date.now();
                                     const currentPointTimeOffset = parseInt(point[0]);
                                     pointWaitTime = currentShapeStartTime + lineWaitTime + currentPointTimeOffset - currentTime;
                                     if (pointWaitTime > 5) {
                                         await sleep(pointWaitTime - 2);
                                     }
-                                    try {
-                                        thisShape.draw();
-                                    }
-                                    catch {
-                                        //setBusyPainting(false);
+                                    // Interrupted when the board changed mid-replay:
+                                    // layer.destroyChildren() detaches the shape, so
+                                    // getLayer() turns null. (Previously detected via
+                                    // draw() throwing after destroy; draw() is no
+                                    // longer called per point.)
+                                    if (thisShape.getLayer() === null) {
                                         return {'error': true, 'reason': 'got interrupted'};
                                     }
-                                } else {
-                                    // If drawing asap, just push the new points to temp array and move on
-                                    linePoints.push(Math.round(point[1] * layerWidth), Math.round(point[2] * layerHeight));
                                 }
                             }
                             if(options.drawAsap) {
