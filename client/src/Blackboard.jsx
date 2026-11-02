@@ -128,6 +128,7 @@ function Blackboard(props) {
     const pointsTotal = useRef(0); // Variable to accumulate drawn points into (for debugging)
 
     const [penLoc, setPenLoc] = useState({ x: 0, y: 0 });
+    const penLocSyncPending = useRef(false); // rAF throttle flag for updatePenLoc
     const [boardSettings, setBoardSettings] = useState(DEF_BOARD);
     const [boardSettingsPending, setBoardSettingsPending] = useState(false); // Kludge to update grid visibility
     const [sessionInfo, setSessionInfo] = useState({ 
@@ -1159,6 +1160,10 @@ function Blackboard(props) {
         log(DEBUG_LEVELS.DEV, 'removeCanvasHandlers ran on stage id ' + stageEl.current._id);
         stageEl.current.getStage().off("pointerenter pointerleave mouseover mouseout", false);
         stageEl.current.removeEventListener('pointerdown pointerup pointermove');
+        // Re-enable hit detection on the draw layer in case a stroke was
+        // abandoned mid-draw (tool switch): penUp never ran, so the layer
+        // would otherwise stay non-listening and break polyline snapping.
+        drawLayer.current.listening(true);
         mainLayer.current.find('Transformer').forEach(node => node.destroy());
 
         // Remove shape-level event handlers and make all shapes non-draggable
@@ -2138,9 +2143,36 @@ function Blackboard(props) {
         }
     }
     
+    /**
+     * Move the Konva cursor circle without a React re-render.
+     *
+     * setPenLoc() state updates re-render the whole Blackboard component on
+     * every pointer move (expensive on a 4K stage with many shapes). The
+     * cursor is a plain Konva node on the tool layer, so its position can be
+     * updated imperatively; React state is only synced lazily so that the
+     * position survives re-renders triggered by other state changes.
+     */
+    const updatePenLoc = useCallback((x, y) => {
+        const cursorNode = konvaCursor.current;
+        if (cursorNode) {
+            cursorNode.position({ x, y });
+            cursorNode.getLayer()?.batchDraw();
+        }
+        // Keep React state roughly in sync (throttled to one update per
+        // animation frame) so penLoc is correct after unrelated re-renders.
+        if (!penLocSyncPending.current) {
+            penLocSyncPending.current = true;
+            requestAnimationFrame(() => {
+                penLocSyncPending.current = false;
+                const node = konvaCursor.current;
+                if (node) setPenLoc({ x: node.x(), y: node.y() });
+            });
+        }
+    }, []);
+
     const laserMove = (e) => {
         e.preventDefault();
-        setPenLoc({ x: e.clientX, y: e.clientY - toolbarSize.height });
+        updatePenLoc(e.clientX, e.clientY - toolbarSize.height);
         socket.emit('laserloc', { sid: props.sid, b: currentBoard, x: (e.clientX / stageSize.width).toFixed(3), y: ((e.clientY - toolbarSize.height) / stageSize.height).toFixed(3), token: getPresenterToken(props.sid) });
     }
 
@@ -2393,6 +2425,19 @@ function Blackboard(props) {
         // Only add shape to layer if we just created it (not for polyline intermediate points)
         if(konvaShape.current && !openPolyLine.shape) {
             drawLayer.current.add(konvaShape.current); // Definitely need to draw on separate layer if there's a lot of stuff !!!
+            // The in-progress shape never needs hit detection. Rasterizing its
+            // hit path (wide hitStrokeWidth + bezier curves, growing every move)
+            // into the stage-sized CPU hit canvas on every frame is one of the
+            // biggest per-move costs of live drawing, especially on 4K screens.
+            konvaShape.current.listening(false);
+            // For non-polyline strokes nothing on the draw layer needs hit
+            // detection either (polyline snap circles do). A non-listening
+            // layer keeps its hit canvas released (0x0), so per-frame draws
+            // skip the full-canvas hit clear and pointer moves skip the
+            // 1px getImageData hit test on this layer entirely.
+            if(mode !== 'Polyline') {
+                drawLayer.current.listening(false);
+            }
             const shapeStartTime = Date.now();
             konvaShape.current.setAttr("startTime", shapeStartTime);
             konvaShape.current.setAttr("boardId", currentBoard);
@@ -2425,7 +2470,7 @@ function Blackboard(props) {
         // Even if not drawing, we need to update Konva cursor location when "use mouse" is set
         if(drawingPointer === null && !konvaShape.current) {
             if(ui.mouse || fill.color === 'wipe' || stroke.color === 'wipe') {
-                setPenLoc({ x: e.clientX, y: e.clientY - toolbarSize.height });
+                updatePenLoc(e.clientX, e.clientY - toolbarSize.height);
             }
             return;
         }
@@ -2450,7 +2495,7 @@ function Blackboard(props) {
         } else if(!konvaShape.current) return; // prevent accessing null shape object
 
         if(fill.color === 'wipe' || stroke.color === 'wipe') {
-            setPenLoc({ x: e.clientX, y: e.clientY - toolbarSize.height });
+            updatePenLoc(e.clientX, e.clientY - toolbarSize.height);
         }
 
         switch(konvaShape.current.attrs.name) {
@@ -2492,9 +2537,13 @@ function Blackboard(props) {
                             konvaShape.current.setAttr('sentLength',dLen);
                         }
                         if(lineProperties.showPoints) emphasizePoint(konvaShape.current.attrs.x + pointX, konvaShape.current.attrs.y + pointY);
-                        const newPoints = konvaShape.current.points().concat(pointX, pointY);
-                        //console.info('added points',pointX,', ',pointY,'to line from pointer',e.pointerId);
-                        konvaShape.current.points(newPoints);
+                        // Push in place instead of points().concat(): concat
+                        // copies the whole array on every pointer move, which
+                        // is O(n^2) over a long stroke. The points() setter
+                        // still schedules the repaint via Konva auto-draw.
+                        const pts = konvaShape.current.points();
+                        pts.push(pointX, pointY);
+                        konvaShape.current.points(pts);
                         if(ui.showPps) pointsTotal.current += 1;
                     }
                 }
@@ -2512,16 +2561,18 @@ function Blackboard(props) {
                 if(!openPolyLine.finished) {
                     if(konvaShape.current.points().length <= drawingData.length * 2) {
                         // We have started a new polyline
-                        let newPoints = konvaShape.current.points();
-                        const addPoints = [newX - konvaShape.current.x(), newY - konvaShape.current.y()];
-                        konvaShape.current.points(newPoints.concat(addPoints));
+                        const newPoints = konvaShape.current.points();
+                        newPoints.push(newX - konvaShape.current.x(), newY - konvaShape.current.y());
+                        konvaShape.current.points(newPoints);
                         //console.info('penMove added point:',konvaShape.current.points());
                     } else {
                         // We are moving the last point of the polyline
                         const X = openPolyLine.snapped ? openPolyLine.snapped.x() - konvaShape.current.x() : newX - konvaShape.current.x();
                         const Y = openPolyLine.snapped ? openPolyLine.snapped.y() - konvaShape.current.y() : newY - konvaShape.current.y();
-                        let existingPoints = konvaShape.current.points().slice(0, -2);
-                        konvaShape.current.points(existingPoints.concat([X, Y]));
+                        const existingPoints = konvaShape.current.points();
+                        existingPoints[existingPoints.length - 2] = X;
+                        existingPoints[existingPoints.length - 1] = Y;
+                        konvaShape.current.points(existingPoints);
                     }
                 }
                 break;
@@ -2587,6 +2638,9 @@ function Blackboard(props) {
 
     function penUp(mode, e) {
         e.preventDefault(); // Prevent mouse event from being called also
+        // Re-enable hit detection on the draw layer (disabled during the
+        // stroke in penDown for performance; polyline snap circles need it).
+        drawLayer.current.listening(true);
         if(swipeOngoing && e.pointerType === 'pen') {
             swipeOngoing = false;
             setSwipeStart(false);
@@ -2813,6 +2867,10 @@ function Blackboard(props) {
                     // If the polyline is finished, move it to permanent layer and cleanup
                     if(openPolyLine.finished) {
                         drawnShape.moveTo(mainLayer.current);
+                        // Restore hit detection (the polyline shape itself was
+                        // never disabled, but keep the invariant explicit here
+                        // so the clone block below can rely on it).
+                        drawnShape.listening(true);
                         if(drawnShape.fillEnabled() && shouldCreateOutlineClones) {
                             const outlineClone = createOutlineClone(drawnShape);
                             if(outlineClone) {
@@ -2919,6 +2977,8 @@ function Blackboard(props) {
                     .then(() => {
                         // Move finished line to main layer and destroy everything in the drawing layer
                         newDot.moveTo(mainLayer.current);
+                        // Restore hit detection (disabled in penDown during the stroke)
+                        newDot.listening(true);
                         log(DEBUG_LEVELS.DEV, 'Moved dot id ' + newDot.attrs.dbId + '. Now ' + drawLayer.current.children.length + ' shapes on drawLayer)');
                         // Need to create outline clone for Dots, too, so deleting works before page reload
                         const outlineClone = createOutlineClone(newDot);
@@ -2956,6 +3016,10 @@ function Blackboard(props) {
                 .then(() => {
                     // Move finished line to main layer and destroy everything in the drawing layer
                     drawnShape.moveTo(mainLayer.current);
+                    // Restore hit detection (disabled in penDown during the
+                    // stroke); the clone block below disables it again when an
+                    // outline clone takes over the events for a filled shape.
+                    drawnShape.listening(true);
                     if(drawnShape.fillEnabled() && shouldCreateOutlineClones) {
                         const outlineClone = createOutlineClone(drawnShape);
                         if(outlineClone) {
