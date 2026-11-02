@@ -1570,7 +1570,17 @@ function Blackboard(props) {
         const drawLayer = toolLayer.current;
         log(DEBUG_LEVELS.DEV, 'drawShape called, previous tool: ' + previousTool + ', shapeType: ' + shapeType);
         removeCanvasHandlers();
-        //layer.listening(false); // no need to listen when drawing
+        // Committed shapes never need hit detection while a shape tool is
+        // active: penDown/penMove/penUp all work on the stage-level pointer
+        // events, and the finger menu only needs e.target when the pointer
+        // is NOT drawing (in which case it hits the stage, not a shape).
+        // A non-listening layer keeps its hit canvas released (0x0), so
+        // committing a stroke (moveTo + batchDraw) no longer rasterizes the
+        // new shape's hit path into a stage-sized bitmap on every pen lift —
+        // the main per-commit cost for short, frequent handwriting strokes.
+        // Tool handlers that DO need shape targets (Select, Transform,
+        // Delete, Recolor) re-enable listening in their own setup functions.
+        layer.listening(false);
         layer.transformsEnabled('none'); // disable transforms while drawing
         drawLayer.batchDraw(); // need a draw to activate event listening
         //layer.find('Line').draggable(false);
