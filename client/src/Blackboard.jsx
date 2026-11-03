@@ -50,6 +50,7 @@ import usePrevious from "./hooks/usePrevious.js";
 import { Circle } from 'react-konva';
 
 import { currentBoardAtom } from "./atoms.js";
+import { createWetInk } from "./ink/wetInk.js";
 import { getBoardDirectionFromSwipe, getBoardLimitsForCurrentBoard, getBoardNavigationTarget, getShapeHistoryActionFromSwipe } from "./boardNavigation.js";
 import { getBoardGridWindow } from "./boardGridWindow.js";
 import { createShapeCloneRequestBody, createShapeRequestBody, createShapeTransformRequestBody, createShapeUpdateRequestBody } from "./shapeRequest.js";
@@ -121,6 +122,8 @@ function Blackboard(props) {
     const toolLayer = useRef(null);
     const mainToolbar = useRef(null);
     const konvaCursor = useRef(null);
+    const wetInkCanvas = useRef(null); // overlay canvas for the live stroke
+    const wetInk = useRef(null); // wet-ink renderer session
     const swipeRef = useRef(false);
     const konvaShape = useRef(null);
 
@@ -1164,6 +1167,8 @@ function Blackboard(props) {
         // abandoned mid-draw (tool switch): penUp never ran, so the layer
         // would otherwise stay non-listening and break polyline snapping.
         drawLayer.current.listening(true);
+        // Same for the wet-ink overlay: clear any half-drawn stroke.
+        wetInk.current?.clear();
         mainLayer.current.find('Transformer').forEach(node => node.destroy());
 
         // Remove shape-level event handlers and make all shapes non-draggable
@@ -2345,6 +2350,18 @@ function Blackboard(props) {
                     strokeScaleEnabled: false // Needed for cleaner resizing
                 });
                 konvaShape.current.setAttr('sentLength', 0);
+                // Start the wet-ink overlay for this stroke: from now on the
+                // visible line is drawn incrementally on the overlay canvas
+                // (snappy, no Konva redraw lag). The Konva shape still
+                // receives the same points and becomes the committed line on
+                // penUp; the overlay is cleared then. The Konva shape is
+                // hidden while wet ink is active — otherwise BOTH renderings
+                // are visible, and any tiny divergence shows as two lines.
+                if (stroke.enabled) {
+                    startWetInk(lineProperties.bezier ? Number(lineProperties.lineTension) : 0, lineProperties.bezier);
+                    konvaShape.current.visible(false);
+                    wetInk.current?.addPoint(points[0], points[1]);
+                }
                 break;
             case 'Arrow':
                 konvaShape.current = new Konva.Arrow({
@@ -2513,6 +2530,15 @@ function Blackboard(props) {
                 const pointX = Math.round(e.clientX) - konvaShape.current.x();
                 const pointY = Math.round(e.clientY - toolbarSize.height) - konvaShape.current.y();
                 const pointTime = Date.now() - konvaShape.current.attrs.startTime;
+                // Wet ink live tail on EVERY pointer move (before the
+                // recording threshold gate): a straight segment from the last
+                // recorded point to the cursor, so the line follows the pen
+                // 1:1. The tail is preview-only; the committed geometry is
+                // the threshold-gated points below.
+                wetInk.current?.setTail(
+                    konvaShape.current.x() + pointX,
+                    konvaShape.current.y() + pointY
+                );
                 // points saved to db are relative to starting point and stage size, 5 decimals max
                 const newScaledX = toRelativeCoords(pointX, stageSize.width);
                 const newScaledY = toRelativeCoords(pointY, stageSize.height);
@@ -2549,11 +2575,25 @@ function Blackboard(props) {
                         if(lineProperties.showPoints) emphasizePoint(konvaShape.current.attrs.x + pointX, konvaShape.current.attrs.y + pointY);
                         // Push in place instead of points().concat(): concat
                         // copies the whole array on every pointer move, which
-                        // is O(n^2) over a long stroke. The points() setter
-                        // still schedules the repaint via Konva auto-draw.
+                        // is O(n^2) over a long stroke.
+                        // NOTE: no Konva repaint happens here while wet ink
+                        // is active — the shape is hidden (visible(false),
+                        // set in penDown) and the wet-ink overlay is the only
+                        // visible rendering. The points() setter still
+                        // schedules a batchDraw, but a hidden layer branch
+                        // costs almost nothing and the shape must stay in
+                        // sync for the commit.
                         const pts = konvaShape.current.points();
                         pts.push(pointX, pointY);
                         konvaShape.current.points(pts);
+                        // The recorded point is now STABLE: its geometry can
+                        // no longer change (future points only extend the
+                        // spline). Promote it from live tail to stable prefix
+                        // so the wet spline matches the committed line 1:1.
+                        wetInk.current?.addPoint(
+                            konvaShape.current.x() + pointX,
+                            konvaShape.current.y() + pointY
+                        );
                         if(ui.showPps) pointsTotal.current += 1;
                     }
                 }
@@ -2934,12 +2974,38 @@ function Blackboard(props) {
                 }
             }
             return;
-        } else {    
+        } else {
             // Not Polyline
+            // Force-record the pen-up position as the final point, bypassing
+            // the time/distance thresholds. Without this, the last segment
+            // (the live tail) would vanish at commit and the line would end
+            // short of where the user lifted the pen — very distracting.
+            // The tail is absorbed into the stable prefix, so the committed
+            // line ends exactly where the wet line did.
+            if(mode === 'Line' && wetInk.current) {
+                const finalX = Math.round(e.clientX) - drawnShape.x();
+                const finalY = Math.round(e.clientY - toolbarSize.height) - drawnShape.y();
+                const finalTime = Date.now() - drawnShape.attrs.startTime;
+                const pts = drawnShape.points();
+                const lastX = pts[pts.length - 2], lastY = pts[pts.length - 1];
+                if(finalX !== lastX || finalY !== lastY) {
+                    pts.push(finalX, finalY);
+                    drawnShape.points(pts);
+                    drawingData.push([
+                        finalTime,
+                        toRelativeCoords(finalX, stageSize.width),
+                        toRelativeCoords(finalY, stageSize.height)
+                    ]);
+                    wetInk.current.addPoint(drawnShape.x() + finalX, drawnShape.y() + finalY);
+                }
+            }
             const dLen = drawingData.length;
             //console.info(drawingData);
 
             // Only one Polyline point or at most two Line points recorded; save result as a Dot
+            // NOTE: the force-recorded final point counts towards dLen, so a
+            // tap that moved slightly now yields a short line instead of a
+            // dot — matching what the user actually drew.
             if(mode === 'Line' && (dLen < 3)) {
                 log(DEBUG_LEVELS.DEV, 'Pixel radius is ' + (drawnShape.attrs.strokeWidth * 0.5));
 
@@ -2989,6 +3055,8 @@ function Blackboard(props) {
                         newDot.moveTo(mainLayer.current);
                         // Restore hit detection (disabled in penDown during the stroke)
                         newDot.listening(true);
+                        // The committed dot replaces the wet stroke
+                        wetInk.current?.clear();
                         log(DEBUG_LEVELS.DEV, 'Moved dot id ' + newDot.attrs.dbId + '. Now ' + drawLayer.current.children.length + ' shapes on drawLayer)');
                         // Need to create outline clone for Dots, too, so deleting works before page reload
                         const outlineClone = createOutlineClone(newDot);
@@ -3002,6 +3070,7 @@ function Blackboard(props) {
                         //if(lineProperties.showPoints) drawLayer.current.find().forEach((c) => c.destroy());
                     }, reason => {
                         drawLayer.current.destroyChildren();
+                        wetInk.current?.clear();
                         setBusyPainting(false);
                         log(DEBUG_LEVELS.ERROR, 'Error in saveShape: ' + reason, true);
                         return;
@@ -3030,6 +3099,10 @@ function Blackboard(props) {
                     // stroke); the clone block below disables it again when an
                     // outline clone takes over the events for a filled shape.
                     drawnShape.listening(true);
+                    // The committed Konva line now replaces the wet stroke:
+                    // clear the overlay and show the dry ink 1:1.
+                    wetInk.current?.clear();
+                    drawnShape.visible(true);
                     if(drawnShape.fillEnabled() && shouldCreateOutlineClones) {
                         const outlineClone = createOutlineClone(drawnShape);
                         if(outlineClone) {
@@ -3045,12 +3118,44 @@ function Blackboard(props) {
                     //if(lineProperties.showPoints) drawLayer.current.find().forEach((c) => c.destroy());
                 }, reason => {
                     drawLayer.current.destroyChildren();
+                    wetInk.current?.clear();
                     setBusyPainting(false);
                     log(DEBUG_LEVELS.ERROR, 'Error in penUp: ' + reason);
                 }) 
             }
         }
     }
+
+    /**
+     * Wet-ink overlay: keeps the live stroke visually in sync with the pen
+     * by drawing each segment incrementally on a plain canvas, bypassing
+     * Konva's scene-graph redraw (which is what causes the pen lag).
+     * Only used for the Line tool; other tools keep their Konva previews.
+     */
+    const ensureWetInk = () => {
+        if (!wetInkCanvas.current) return null;
+        if (!wetInk.current) {
+            wetInk.current = createWetInk(wetInkCanvas.current, {
+                stroke: stroke.color === 'wipe' ? boardSettings.color : stroke.color,
+                strokeWidth: pctToPixels(lineProperties.width, stageSize.width),
+                lineCap: 'round',
+                lineJoin: 'round',
+            });
+        }
+        return wetInk.current;
+    };
+
+    const startWetInk = (tension, bezier) => {
+        const session = ensureWetInk();
+        if (!session) return;
+        session.resize(stageSize.width, stageSize.height, window.devicePixelRatio || 1);
+        session.begin({
+            stroke: stroke.color === 'wipe' ? boardSettings.color : stroke.color,
+            strokeWidth: pctToPixels(lineProperties.width, stageSize.width),
+            lineCap: 'round',
+            lineJoin: 'round',
+        }, tension, bezier);
+    };
 
     const listenToShapes = (mode) => {
         log(DEBUG_LEVELS.DEV, 'listenToShapes: creating event listeners for stage id ' + stageEl.current._id);
@@ -3624,7 +3729,7 @@ function Blackboard(props) {
                 </ButtonToolbar>
             )}
             { boardLimits && ui.showFps && <FPSStats top={41}/> }
-            <div ref={drawArea} style={{ height: `calc(100% - ${toolbarSize.height}px)`/*}, backgroundImage: boardSettings.settings.bg?.url ? "url(" + boardSettings.settings.bg?.url + ")" : 'none', backgroundRepeat: "no-repeat", backgroundSize: "100% 100%"*/}}>
+            <div ref={drawArea} style={{ position: 'relative', height: `calc(100% - ${toolbarSize.height}px)`/*}, backgroundImage: boardSettings.settings.bg?.url ? "url(" + boardSettings.settings.bg?.url + ")" : 'none', backgroundRepeat: "no-repeat", backgroundSize: "100% 100%"*/}}>
             <Stage id="mainstage" 
                 /*tabIndex={0} 
                 onKeyPress={keyNavigation}*/
@@ -3710,6 +3815,24 @@ function Blackboard(props) {
                     <Cursor ref={konvaCursor} penLoc={penLoc} cursor={cursor} />
                 </Layer>
             </Stage>
+            {/*
+                Wet-ink overlay: a plain canvas stacked on top of the Konva
+                stage. The Line tool draws the in-progress stroke here
+                incrementally (one segment per pointer move, no clear, no
+                scene graph) so the line follows the pen without the Konva
+                redraw lag. Cleared when the stroke is committed to Konva.
+                pointer-events: none — all input stays on the Konva stage.
+            */}
+            <canvas
+                ref={wetInkCanvas}
+                style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    pointerEvents: 'none',
+                    zIndex: 10,
+                }}
+            />
             {/* Menus must live outside the Stage: they are DOM content, rendered into document.body via portals */}
             {contextMenu && (
                 <Portal>
